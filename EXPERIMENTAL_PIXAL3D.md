@@ -18,7 +18,7 @@ That means this branch is for testing only.
 
 ## Operational notes
 
-Pixal3D is CUDA-heavy and upstream's easiest path is Linux/Python 3.10 with downloaded wheels and Hugging Face models. Windows support is not clean yet.
+Pixal3D is CUDA-heavy and upstream's easiest path is Linux/Python 3.10 with downloaded wheels and Hugging Face models. Windows support is not clean upstream, but this branch now has a Windows-native experimental path so a WSL2 Ubuntu runtime is not the first thing to try.
 
 The app installer does not include Pixal3D, its weights, or its dependencies. The experimental installer path clones `TencentARC/Pixal3D` and creates a separate `uv` venv.
 
@@ -27,8 +27,25 @@ Known risk points:
 - dynamic Hugging Face model downloads
 - direct GitHub wheel URLs
 - Linux/CUDA-specific wheels in `requirements-hfdemo.txt`
+- Windows uses community CUDA wheels from `visualbruno/ComfyUI-Trellis2`, pinned to a specific commit and SHA-256 hashes
+- Windows skips NATTEN because Pixal3D does not import it directly and official NATTEN `0.21.0` wheels are Linux-only
+- Windows patches Pixal3D sparse attention to use PyTorch SDPA instead of `flash_attn`/`xformers`; this should be slower but avoids WSL2-only wheels
 - very new upstream repo, no release/security policy yet
 - no Gradio `share=True` path is used by this integration
+
+## Windows-native experiment
+
+The Windows route is intentionally isolated and license-gated:
+
+1. Create a separate Pixal3D `uv` venv under app user-data with Python 3.11.
+2. Install PyTorch `2.7.0` / CUDA `12.8` wheels.
+3. Install pinned community Windows wheels for the mesh/texturing CUDA extensions: `cumesh`, `flex_gemm`, `nvdiffrast`, `nvdiffrec_render`, and `o_voxel`.
+4. Skip NATTEN on Windows. Upstream lists `natten==0.21.0`, but static inspection found no direct `import natten`/`from natten` in Pixal3D or MoGe. The actual attention paths use `flash_attn`, `xformers`, `sdpa`, or `naive` for dense attention, and sparse attention is patched to accept `sdpa`.
+5. Run Pixal3D with `ATTN_BACKEND=sdpa` and `SPARSE_ATTN_BACKEND=sdpa`.
+
+This is the best current bet for keeping the workflow inside the Windows application. It still needs a real RTX Windows smoke test because this Linux dev host cannot validate CUDA/Windows wheels.
+
+Fallback if it fails: install Visual Studio 2022 C++ Build Tools + NVIDIA CUDA Toolkit and build the missing CUDA packages natively. WSL2/Linux remains the reliability fallback, not the preferred app path.
 
 ## Test flow
 

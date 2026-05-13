@@ -147,6 +147,71 @@ function pixal3dPythonPath() {
   return path.join(pixal3dVenvPath(), 'bin', 'python');
 }
 
+function pixal3dInstallMarkerPath() {
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v1.json' : 'install-linux-cuda-v1.json';
+  return path.join(pixal3dRoot(), markerName);
+}
+
+const PIXAL3D_WINDOWS_WHEELS_BASE = 'https://raw.githubusercontent.com/visualbruno/ComfyUI-Trellis2/86d13d9eac4a2bd4395954c7184d3aa4fa81a9d8/wheels/Windows/Torch270';
+const PIXAL3D_WINDOWS_WHEELS = [
+  ['cumesh-1.0-cp311-cp311-win_amd64.whl', 'f6ec70f31fa24ebef0026ea5d622fce4314e22e2c56979219598fdd6e4df3b28'],
+  ['flex_gemm-0.0.1-cp311-cp311-win_amd64.whl', '3a1b8ef109735cc8f19729a007abb48b9a91815f350bc10cc513f5c7e27608f2'],
+  ['nvdiffrast-0.4.0-cp311-cp311-win_amd64.whl', '6d273cc912143a306389ec7b5e0fa44efbe45ea7577f86d8f13ce6b209c56c3e'],
+  ['nvdiffrec_render-0.0.0-cp311-cp311-win_amd64.whl', 'c0e4bf4ea6622ddff0eea0ca8b9be75a48318db62a7184891bcb0f1da65d1f8c'],
+  ['o_voxel-0.0.1-cp311-cp311-win_amd64.whl', 'da17f251f05ea31c1d0ad2fa3e4b7e025463cb9a12a66fb8ddb3b28634ad1636'],
+];
+
+function pixal3dWindowsWheelRequirements() {
+  return PIXAL3D_WINDOWS_WHEELS.map(([fileName, sha256]) => `${PIXAL3D_WINDOWS_WHEELS_BASE}/${fileName}#sha256=${sha256}`);
+}
+
+function pixal3dExecutionEnv(extra = {}) {
+  return {
+    ...extra,
+    // Windows has no official flash-attn/NATTEN path here. Use PyTorch SDPA for
+    // the experimental provider and keep SHARP's runtime untouched.
+    ATTN_BACKEND: process.platform === 'win32' ? 'sdpa' : (extra.ATTN_BACKEND || process.env.ATTN_BACKEND || 'flash_attn'),
+    SPARSE_ATTN_BACKEND: process.platform === 'win32' ? 'sdpa' : (extra.SPARSE_ATTN_BACKEND || process.env.SPARSE_ATTN_BACKEND || 'flash_attn'),
+  };
+}
+
+function patchPixal3DWindowsSource(repo) {
+  if (process.platform !== 'win32') return;
+
+  const sparseConfigPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'config.py');
+  const sparseAttentionPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'attention', 'full_attn.py');
+  if (!fs.existsSync(sparseConfigPath) || !fs.existsSync(sparseAttentionPath)) {
+    throw new Error('Pixal3D sparse attention files were not found for Windows SDPA patching.');
+  }
+
+  let sparseConfig = fs.readFileSync(sparseConfigPath, 'utf8');
+  sparseConfig = sparseConfig
+    .replace("ATTN = 'flash_attn'", "ATTN = 'sdpa'")
+    .replace("['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4']", "['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4', 'sdpa']")
+    .replace("Literal['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4']", "Literal['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4', 'sdpa']");
+  fs.writeFileSync(sparseConfigPath, sparseConfig);
+
+  let sparseAttention = fs.readFileSync(sparseAttentionPath, 'utf8');
+  if (!sparseAttention.includes('Windows-native SDPA fallback')) {
+    const marker = "    if config.ATTN == 'xformers':\n";
+    const fallback = `    # Windows-native SDPA fallback: slower than flash-attn/xformers, but avoids\n    # Linux-only CUDA wheels and keeps the experimental provider inside the app.\n    def _sdpa_varlen(q, k, v, q_seqlen, kv_seqlen):\n        outs = []\n        q_off = 0\n        kv_off = 0\n        for n in range(len(q_seqlen)):\n            qn = q_seqlen[n]\n            kn = kv_seqlen[n]\n            q_i = q[q_off:q_off + qn].transpose(0, 1).unsqueeze(0)\n            k_i = k[kv_off:kv_off + kn].transpose(0, 1).unsqueeze(0)\n            v_i = v[kv_off:kv_off + kn].transpose(0, 1).unsqueeze(0)\n            out_i = torch.nn.functional.scaled_dot_product_attention(\n                q_i, k_i, v_i, dropout_p=0.0, is_causal=False\n            )[0]\n            outs.append(out_i.transpose(0, 1))\n            q_off += qn\n            kv_off += kn\n        return torch.cat(outs, dim=0)\n\n    if num_all_args == 1:\n        q, k, v = qkv.unbind(dim=1)\n    elif num_all_args == 2:\n        k, v = kv.unbind(dim=1)\n\n`;
+    if (!sparseAttention.includes(marker)) throw new Error('Pixal3D sparse attention dispatch marker changed upstream.');
+    sparseAttention = sparseAttention.replace(marker, fallback + marker);
+  }
+
+  const raiseText = "    else:\n        raise ValueError(f\"Unknown attention module: {config.ATTN}\")\n";
+  const sdpaText = "    elif config.ATTN == 'sdpa':\n        out = _sdpa_varlen(q, k, v, q_seqlen, kv_seqlen)\n    else:\n        raise ValueError(f\"Unknown attention module: {config.ATTN}\")\n";
+  if (sparseAttention.includes("elif config.ATTN == 'sdpa':")) {
+    // Already patched.
+  } else if (sparseAttention.includes(raiseText)) {
+    sparseAttention = sparseAttention.replace(raiseText, sdpaText);
+  } else {
+    throw new Error('Pixal3D sparse attention fallback marker changed upstream.');
+  }
+  fs.writeFileSync(sparseAttentionPath, sparseAttention);
+  sendLog('Patched Pixal3D sparse attention to allow Windows PyTorch SDPA fallback.');
+}
+
 function ensureDirs() {
   migrateLegacyRuntimeIfNeeded();
   fs.mkdirSync(runtimeRoot(), { recursive: true });
@@ -329,13 +394,16 @@ function checkPixal3DStatus() {
   const root = pixal3dRoot();
   const repo = pixal3dRepoPath();
   const py = pixal3dPythonPath();
+  const marker = pixal3dInstallMarkerPath();
   return {
     root,
     repo,
     repoExists: fs.existsSync(path.join(repo, 'inference.py')),
     python: py,
     pythonExists: fs.existsSync(py),
-    ready: fs.existsSync(path.join(repo, 'inference.py')) && fs.existsSync(py),
+    installMarker: marker,
+    installMarkerExists: fs.existsSync(marker),
+    ready: fs.existsSync(path.join(repo, 'inference.py')) && fs.existsSync(py) && fs.existsSync(marker),
     license: 'Pixal3D academic-only, no commercial/production use, not intended for EU use.',
   };
 }
@@ -343,7 +411,7 @@ function checkPixal3DStatus() {
 async function installPixal3D(request = {}) {
   if (!request.acceptLicense) throw new Error('Pixal3D license gate not accepted. It is academic-only, non-production, and not intended for EU use.');
   if (process.platform === 'win32') {
-    sendLog('Warning: Pixal3D upstream wheels target Linux CUDA/Python 3.10. Windows install is experimental and may fail.');
+    sendLog('Warning: Pixal3D upstream is Linux-first. Windows install uses community CUDA wheels and PyTorch SDPA fallback, isolated from SHARP.');
   }
   const root = pixal3dRoot();
   const repo = pixal3dRepoPath();
@@ -359,13 +427,20 @@ async function installPixal3D(request = {}) {
     await runProcess('git', ['checkout', 'FETCH_HEAD'], { cwd: repo });
   }
 
+  patchPixal3DWindowsSource(repo);
+
   const uv = uvPath();
   const env = {
     UV_CACHE_DIR: path.join(root, 'uv-cache'),
     UV_LINK_MODE: 'copy',
     PIP_DISABLE_PIP_VERSION_CHECK: '1',
   };
-  await runProcess(uv, ['venv', pixal3dVenvPath(), '--python', '3.10', '--python-preference', 'managed'], { env });
+  if (process.platform === 'win32' && fs.existsSync(pixal3dVenvPath()) && !fs.existsSync(pixal3dInstallMarkerPath())) {
+    sendLog('Removing incomplete previous Pixal3D Windows venv before creating the Python 3.11 SDPA runtime.');
+    fs.rmSync(pixal3dVenvPath(), { recursive: true, force: true });
+  }
+  const pythonVersion = process.platform === 'win32' ? '3.11' : '3.10';
+  await runProcess(uv, ['venv', pixal3dVenvPath(), '--python', pythonVersion, '--python-preference', 'managed'], { env });
   const py = pixal3dPythonPath();
   const requirements = fs.existsSync(path.join(repo, 'requirements-hfdemo.txt')) && process.platform !== 'win32'
     ? 'requirements-hfdemo.txt'
@@ -385,29 +460,12 @@ async function installPixal3D(request = {}) {
     .join('\n');
   fs.writeFileSync(filteredRequirementsPath, filteredRequirements);
 
-  sendLog('Pre-installing CUDA PyTorch for Pixal3D/NATTEN. This is large but avoids a known NATTEN build-isolation failure.');
+  sendLog('Pre-installing CUDA PyTorch for Pixal3D. This is large.');
   if (process.platform === 'win32') {
-    await runProcess(uv, ['pip', 'install', '--python', py, '--index-url', 'https://download.pytorch.org/whl/cu126', 'torch==2.7.0', 'torchvision==0.22.0'], { cwd: repo, env });
-    sendLog('Installing Python build helpers for Windows NATTEN source-build fallback.');
-    await runProcess(uv, ['pip', 'install', '--python', py, 'setuptools>=70', 'wheel', 'packaging', 'ninja', 'cmake'], { cwd: repo, env });
-    sendLog('Installing NATTEN 0.21.0 wheel for Torch 2.7 / CUDA 12.6. Official wheels are Linux-only today; Windows will probably use the source-build fallback.');
-    try {
-      await runProcess(uv, ['pip', 'install', '--python', py, 'natten==0.21.0+torch270cu126', '-f', 'https://whl.natten.org'], { cwd: repo, env });
-    } catch (err) {
-      sendLog('Official NATTEN wheel install failed or is unavailable for Windows. Retrying source build with torch/build helpers visible and Ada RTX 40-series arch hint (SM 8.9).');
-      sendLog('If this fails, install Visual Studio 2022 Build Tools with C++ workload and NVIDIA CUDA Toolkit, or run Pixal3D under WSL2/Linux where upstream wheels exist.');
-      try {
-        await runProcess(uv, ['pip', 'install', '--python', py, '--no-build-isolation', 'natten==0.21.0'], {
-          cwd: repo,
-          env: { ...env, NATTEN_CUDA_ARCH: '8.9', NATTEN_N_WORKERS: '8' },
-        });
-      } catch (buildErr) {
-        buildErr.message = `${buildErr.message}
-
-Windows NATTEN fallback build failed. This is expected on machines without Visual Studio 2022 Build Tools C++ workload and NVIDIA CUDA Toolkit/NVCC. Upstream prebuilt NATTEN 0.21.0 wheels are Linux-only, so the most reliable path is WSL2/Linux CUDA.`;
-        throw buildErr;
-      }
-    }
+    await runProcess(uv, ['pip', 'install', '--python', py, '--index-url', 'https://download.pytorch.org/whl/cu128', 'torch==2.7.0', 'torchvision==0.22.0'], { cwd: repo, env });
+    sendLog('Skipping NATTEN on Windows: Pixal3D does not import it directly, and official 0.21.0 wheels are Linux-only. Using PyTorch SDPA attention fallback instead.');
+    sendLog('Installing pinned community Windows CUDA wheels for Pixal3D mesh/texturing extensions (cumesh, flex_gemm, nvdiffrast, nvdiffrec_render, o_voxel).');
+    await runProcess(uv, ['pip', 'install', '--python', py, ...pixal3dWindowsWheelRequirements()], { cwd: repo, env });
   } else {
     await runProcess(uv, ['pip', 'install', '--python', py, '--extra-index-url', 'https://download.pytorch.org/whl/cu126', 'torch==2.7.0', 'torchvision==0.22.0'], { cwd: repo, env });
     await runProcess(uv, ['pip', 'install', '--python', py, 'natten==0.21.0+torch270cu126', '-f', 'https://whl.natten.org'], { cwd: repo, env });
@@ -416,6 +474,12 @@ Windows NATTEN fallback build failed. This is expected on machines without Visua
   sendLog(`Installing remaining Pixal3D dependencies from filtered ${requirements}. This can still be large and CUDA-specific.`);
   await runProcess(uv, ['pip', 'install', '--python', py, '--no-build-isolation', '-r', filteredRequirementsPath], { cwd: repo, env });
   await runProcess(uv, ['pip', 'install', '--python', py, 'https://github.com/LDYang694/Storages/releases/download/20260430/utils3d-0.0.2-py3-none-any.whl'], { cwd: repo, env });
+  fs.writeFileSync(pixal3dInstallMarkerPath(), JSON.stringify({
+    platform: process.platform,
+    pythonVersion,
+    attentionBackend: process.platform === 'win32' ? 'sdpa' : 'flash_attn',
+    installedAt: new Date().toISOString(),
+  }, null, 2));
   sendLog('Pixal3D experimental install complete.');
   sendJobState({ busy: false, label: 'Pixal3D ready' });
   return checkPixal3DStatus();
@@ -432,7 +496,7 @@ async function runPixal3D(request = {}) {
   sendLog('Running Pixal3D as an external experimental provider: image → GLB mesh/material output.');
   const outputGlb = path.join(request.outputFolder, `${sanitizeStem(request.inputPath)}_pixal3d.glb`);
   const args = ['inference.py', '--image', request.inputPath, '--output', outputGlb, '--seed', String(request.seed || 42)];
-  await runProcess(pixal3dPythonPath(), args, { cwd: pixal3dRepoPath() });
+  await runProcess(pixal3dPythonPath(), args, { cwd: pixal3dRepoPath(), env: pixal3dExecutionEnv() });
   const newest = fs.existsSync(outputGlb) ? { filePath: outputGlb, size: fs.statSync(outputGlb).size } : findNewestGlb(request.outputFolder);
   if (!newest) throw new Error('Pixal3D finished but no .glb was found in the output folder.');
   sendLog(`GLB written: ${newest.filePath}`);
