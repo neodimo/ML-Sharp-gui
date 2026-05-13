@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, clipboard } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { PNG } = require('pngjs');
 const { defaultColorSpaceFor, loadImage, makePreviewPngDataUrl } = require('./lib/image-loader.cjs');
@@ -436,13 +436,20 @@ async function installPixal3D(request = {}) {
     UV_LINK_MODE: 'copy',
     PIP_DISABLE_PIP_VERSION_CHECK: '1',
   };
-  if (process.platform === 'win32' && fs.existsSync(pixal3dVenvPath()) && !fs.existsSync(pixal3dInstallMarkerPath())) {
-    sendLog('Removing incomplete previous Pixal3D Windows venv before creating the Python 3.11 SDPA runtime.');
+  const pythonVersion = process.platform === 'win32' ? '3.11' : '3.10';
+  const py = pixal3dPythonPath();
+  const pyvenvCfg = path.join(pixal3dVenvPath(), 'pyvenv.cfg');
+  const existingVenvText = fs.existsSync(pyvenvCfg) ? fs.readFileSync(pyvenvCfg, 'utf8') : '';
+  const wrongWindowsPython = process.platform === 'win32' && existingVenvText && !existingVenvText.includes('version_info = 3.11');
+  if (process.platform === 'win32' && fs.existsSync(pixal3dVenvPath()) && (!fs.existsSync(py) || wrongWindowsPython)) {
+    sendLog('Removing incompatible/incomplete previous Pixal3D Windows venv before recreating it.');
     fs.rmSync(pixal3dVenvPath(), { recursive: true, force: true });
   }
-  const pythonVersion = process.platform === 'win32' ? '3.11' : '3.10';
-  await runProcess(uv, ['venv', pixal3dVenvPath(), '--python', pythonVersion, '--python-preference', 'managed'], { env });
-  const py = pixal3dPythonPath();
+  if (fs.existsSync(py)) {
+    sendLog(`Reusing existing Pixal3D Python runtime: ${py}`);
+  } else {
+    await runProcess(uv, ['venv', pixal3dVenvPath(), '--python', pythonVersion, '--python-preference', 'managed'], { env });
+  }
   const requirements = fs.existsSync(path.join(repo, 'requirements-hfdemo.txt')) && process.platform !== 'win32'
     ? 'requirements-hfdemo.txt'
     : 'requirements.txt';
@@ -464,6 +471,8 @@ async function installPixal3D(request = {}) {
   sendLog('Pre-installing CUDA PyTorch for Pixal3D. This is large.');
   if (process.platform === 'win32') {
     await runProcess(uv, ['pip', 'install', '--python', py, '--index-url', 'https://download.pytorch.org/whl/cu128', 'torch==2.7.0', 'torchvision==0.22.0'], { cwd: repo, env });
+    sendLog('Installing Python build helpers required by MoGe transitive Git dependencies.');
+    await runProcess(uv, ['pip', 'install', '--python', py, 'setuptools>=70', 'wheel', 'packaging'], { cwd: repo, env });
     sendLog('Skipping NATTEN on Windows: Pixal3D does not import it directly, and official 0.21.0 wheels are Linux-only. Using PyTorch SDPA attention fallback instead.');
     sendLog('Installing pinned community Windows CUDA wheels for Pixal3D mesh/texturing extensions (cumesh, flex_gemm, nvdiffrast, nvdiffrec_render, o_voxel).');
     await runProcess(uv, ['pip', 'install', '--python', py, ...pixal3dWindowsWheelRequirements()], { cwd: repo, env });
@@ -795,4 +804,9 @@ ipcMain.handle('open-external', async (_event, url) => {
     return true;
   }
   return false;
+});
+
+ipcMain.handle('copy-text', async (_event, text) => {
+  clipboard.writeText(String(text || ''));
+  return true;
 });

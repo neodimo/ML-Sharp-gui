@@ -46,6 +46,7 @@ const el = {
   inputPlaceholder: $('inputPlaceholder'),
   inputInfo: $('inputInfo'),
   log: $('log'),
+  copyLogButton: $('copyLogButton'),
   runtimeInfo: $('runtimeInfo'),
   docsButton: $('docsButton'),
   runtimeButton: $('runtimeButton'),
@@ -69,10 +70,34 @@ function setStatus(message, kind = '') {
 }
 
 function appendLog(line) {
-  if (!line) return;
+  const text = String(line || '');
+  if (!text) return;
   const atBottom = el.log.scrollTop + el.log.clientHeight >= el.log.scrollHeight - 20;
-  el.log.textContent += `${line}\n`;
+  el.log.textContent += `${text}\n`;
   if (atBottom) el.log.scrollTop = el.log.scrollHeight;
+}
+
+function appendError(label, err) {
+  const message = err && err.message ? err.message : String(err || 'Unknown error');
+  appendLog('');
+  appendLog(`[ERROR] ${label}`);
+  appendLog(message);
+  appendLog('');
+  return message;
+}
+
+async function copyLog() {
+  const text = el.log.textContent || '';
+  if (!text.trim()) {
+    setStatus('Runtime log is empty.', 'busy');
+    return;
+  }
+  try {
+    await sharpSplat.copyText(text);
+    setStatus('Runtime log copied to clipboard.', 'good');
+  } catch (err) {
+    setStatus(`Copy failed: ${err.message || err}`, 'bad');
+  }
 }
 
 function setProgress(mode, percent = 0) {
@@ -148,7 +173,8 @@ async function refreshInputPreview() {
     el.inputPreview.classList.add('hidden');
     el.inputPlaceholder.classList.remove('hidden');
     el.inputInfo.textContent = '';
-    setStatus(`Preview failed: ${err.message || err}`, 'bad');
+    appendError('Preview failed', err);
+    setStatus('Preview failed — see Runtime log.', 'bad');
   } finally {
     setBusy(false);
   }
@@ -182,7 +208,8 @@ async function checkRuntime(showGood = true) {
     if (showGood) setStatus(status.ready ? 'Runtime ready.' : 'Runtime not installed yet. Click install/check runtime or just Run SHARP.', status.ready ? 'good' : 'busy');
     return status;
   } catch (err) {
-    setStatus(`Runtime check failed: ${err.message || err}`, 'bad');
+    appendError('Runtime check failed', err);
+    setStatus('Runtime check failed — see Runtime log.', 'bad');
     return null;
   }
 }
@@ -194,7 +221,8 @@ async function checkForUpdates() {
     const result = await sharpSplat.checkForUpdates();
     if (result && result.ok === false) el.updateStatus.textContent = result.message || 'Updater is unavailable in this build.';
   } catch (err) {
-    el.updateStatus.textContent = `Update check failed: ${err.message || err}`;
+    appendError('Update check failed', err);
+    el.updateStatus.textContent = 'Update check failed — see Runtime log.';
     el.updateButton.disabled = false;
   }
 }
@@ -205,7 +233,8 @@ async function restartAndInstallUpdate() {
   try {
     await sharpSplat.restartAndInstallUpdate();
   } catch (err) {
-    el.updateStatus.textContent = `Restart failed: ${err.message || err}`;
+    appendError('Restart failed', err);
+    el.updateStatus.textContent = 'Restart failed — see Runtime log.';
     el.restartUpdateButton.disabled = false;
   }
 }
@@ -220,7 +249,8 @@ async function installRuntime() {
     drawPlyViewer();
     setStatus('Runtime ready.', 'good');
   } catch (err) {
-    setStatus(`Runtime install failed: ${err.message || err}`, 'bad');
+    appendError('Runtime install failed', err);
+    setStatus('Runtime install failed — see Runtime log.', 'bad');
   } finally {
     setBusy(false);
   }
@@ -251,7 +281,8 @@ async function runSharp() {
     setProgress('done');
     await loadPlyViewer(result.outputPly);
   } catch (err) {
-    setStatus(`SHARP failed: ${err.message || err}`, 'bad');
+    appendError('SHARP failed', err);
+    setStatus('SHARP failed — see Runtime log.', 'bad');
   } finally {
     setBusy(false);
   }
@@ -267,7 +298,8 @@ async function checkPixal3D(showGood = true) {
     if (showGood) setStatus(status.ready ? 'Pixal3D experimental backend ready.' : 'Pixal3D not installed yet.', status.ready ? 'good' : 'busy');
     return status;
   } catch (err) {
-    el.pixalStatus.textContent = `Pixal3D check failed: ${err.message || err}`;
+    appendError('Pixal3D check failed', err);
+    el.pixalStatus.textContent = 'Pixal3D check failed — see Runtime log.';
     return null;
   }
 }
@@ -289,8 +321,9 @@ async function installPixal3D() {
     setStatus('Pixal3D experimental backend ready.', 'good');
     await checkPixal3D(false);
   } catch (err) {
-    setStatus(`Pixal3D install failed: ${err.message || err}`, 'bad');
-    el.pixalStatus.textContent = `Install failed: ${err.message || err}`;
+    appendError('Pixal3D install failed', err);
+    setStatus('Pixal3D install failed — see Runtime log.', 'bad');
+    el.pixalStatus.textContent = 'Install failed — see Runtime log. Use Copy log to paste the full report.';
   } finally {
     setBusy(false);
   }
@@ -315,7 +348,8 @@ async function runPixal3D() {
     el.viewerInfo.textContent = 'GLB generated. Use Show output/open folder to inspect it in a GLB viewer.';
     setProgress('done');
   } catch (err) {
-    setStatus(`Pixal3D failed: ${err.message || err}`, 'bad');
+    appendError('Pixal3D failed', err);
+    setStatus('Pixal3D failed — see Runtime log.', 'bad');
   } finally {
     setBusy(false);
   }
@@ -348,7 +382,8 @@ sharpSplat.onUpdateState((update) => {
   if (update.status === 'available') {
     el.updateStatus.textContent = `${update.message} Downloading now…`;
     sharpSplat.downloadUpdate().catch((err) => {
-      el.updateStatus.textContent = `Update download failed: ${err.message || err}`;
+      appendError('Update download failed', err);
+      el.updateStatus.textContent = 'Update download failed — see Runtime log.';
       el.updateButton.disabled = false;
     });
   }
@@ -365,6 +400,7 @@ el.installButton.addEventListener('click', installRuntime);
 el.runButton.addEventListener('click', runSharp);
 el.cancelButton.addEventListener('click', cancelJob);
 el.runtimeButton.addEventListener('click', () => checkRuntime(true));
+el.copyLogButton.addEventListener('click', copyLog);
 el.pixalCheckButton.addEventListener('click', () => checkPixal3D(true));
 el.pixalInstallButton.addEventListener('click', installPixal3D);
 el.pixalRunButton.addEventListener('click', runPixal3D);

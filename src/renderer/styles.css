@@ -92,6 +92,7 @@ button {
 }
 button:hover { filter: brightness(1.12); transform: translateY(-1px); }
 button:disabled { opacity: 0.48; cursor: not-allowed; transform: none; }
+button.small { padding: 0.38rem 0.58rem; border-radius: 9px; font-size: 0.78rem; }
 .primary { background: linear-gradient(135deg, #8d7aff, #00d7bb); border: 0; color: #061016; font-weight: 850; box-shadow: 0 12px 34px rgba(0, 215, 187, 0.18); }
 .ghost { background: rgba(255, 255, 255, 0.06); }
 .danger { background: rgba(255, 91, 122, 0.14); color: #ffd4dc; border-color: rgba(255, 91, 122, 0.28); }
@@ -151,6 +152,7 @@ button:disabled { opacity: 0.48; cursor: not-allowed; transform: none; }
 .viewport, .viewer, .logPanel { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .viewportHeader { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.85rem 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
 .viewportHeader span { color: #9ba5bd; font-size: 0.8rem; text-align: right; }
+.logActions { display: flex; align-items: center; justify-content: flex-end; gap: 0.55rem; min-width: 0; }
 .previewShell, .viewerShell {
   position: relative;
   min-height: 0;
