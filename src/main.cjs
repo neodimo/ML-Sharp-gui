@@ -388,15 +388,25 @@ async function installPixal3D(request = {}) {
   sendLog('Pre-installing CUDA PyTorch for Pixal3D/NATTEN. This is large but avoids a known NATTEN build-isolation failure.');
   if (process.platform === 'win32') {
     await runProcess(uv, ['pip', 'install', '--python', py, '--index-url', 'https://download.pytorch.org/whl/cu126', 'torch==2.7.0', 'torchvision==0.22.0'], { cwd: repo, env });
-    sendLog('Installing NATTEN 0.21.0 wheel for Torch 2.7 / CUDA 12.6. If this falls back to a source build, Windows may require Visual Studio Build Tools + CUDA Toolkit.');
+    sendLog('Installing Python build helpers for Windows NATTEN source-build fallback.');
+    await runProcess(uv, ['pip', 'install', '--python', py, 'setuptools>=70', 'wheel', 'packaging', 'ninja', 'cmake'], { cwd: repo, env });
+    sendLog('Installing NATTEN 0.21.0 wheel for Torch 2.7 / CUDA 12.6. Official wheels are Linux-only today; Windows will probably use the source-build fallback.');
     try {
       await runProcess(uv, ['pip', 'install', '--python', py, 'natten==0.21.0+torch270cu126', '-f', 'https://whl.natten.org'], { cwd: repo, env });
     } catch (err) {
-      sendLog('Official NATTEN wheel install failed. Retrying source build with torch visible and Ada RTX 40-series arch hint (SM 8.9).');
-      await runProcess(uv, ['pip', 'install', '--python', py, '--no-build-isolation', 'natten==0.21.0'], {
-        cwd: repo,
-        env: { ...env, NATTEN_CUDA_ARCH: '8.9', NATTEN_N_WORKERS: '8' },
-      });
+      sendLog('Official NATTEN wheel install failed or is unavailable for Windows. Retrying source build with torch/build helpers visible and Ada RTX 40-series arch hint (SM 8.9).');
+      sendLog('If this fails, install Visual Studio 2022 Build Tools with C++ workload and NVIDIA CUDA Toolkit, or run Pixal3D under WSL2/Linux where upstream wheels exist.');
+      try {
+        await runProcess(uv, ['pip', 'install', '--python', py, '--no-build-isolation', 'natten==0.21.0'], {
+          cwd: repo,
+          env: { ...env, NATTEN_CUDA_ARCH: '8.9', NATTEN_N_WORKERS: '8' },
+        });
+      } catch (buildErr) {
+        buildErr.message = `${buildErr.message}
+
+Windows NATTEN fallback build failed. This is expected on machines without Visual Studio 2022 Build Tools C++ workload and NVIDIA CUDA Toolkit/NVCC. Upstream prebuilt NATTEN 0.21.0 wheels are Linux-only, so the most reliable path is WSL2/Linux CUDA.`;
+        throw buildErr;
+      }
     }
   } else {
     await runProcess(uv, ['pip', 'install', '--python', py, '--extra-index-url', 'https://download.pytorch.org/whl/cu126', 'torch==2.7.0', 'torchvision==0.22.0'], { cwd: repo, env });
