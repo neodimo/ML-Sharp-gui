@@ -148,7 +148,7 @@ function pixal3dPythonPath() {
 }
 
 function pixal3dInstallMarkerPath() {
-  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v1.json' : 'install-linux-cuda-v1.json';
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v2.json' : 'install-linux-cuda-v1.json';
   return path.join(pixal3dRoot(), markerName);
 }
 
@@ -164,6 +164,14 @@ const PIXAL3D_WINDOWS_WHEELS = [
 function pixal3dWindowsWheelRequirements() {
   return PIXAL3D_WINDOWS_WHEELS.map(([fileName, sha256]) => `${PIXAL3D_WINDOWS_WHEELS_BASE}/${fileName}#sha256=${sha256}`);
 }
+
+const PIXAL3D_WINDOWS_INFERENCE_DEPS = [
+  'transformers==4.57.3',
+  'kornia==0.8.2',
+  'timm==1.0.22',
+  'imageio==2.37.2',
+  'imageio-ffmpeg==0.6.0',
+];
 
 function pixal3dExecutionEnv(extra = {}) {
   return {
@@ -473,6 +481,8 @@ async function installPixal3D(request = {}) {
     await runProcess(uv, ['pip', 'install', '--python', py, '--index-url', 'https://download.pytorch.org/whl/cu128', 'torch==2.7.0', 'torchvision==0.22.0'], { cwd: repo, env });
     sendLog('Installing Python build helpers required by MoGe transitive Git dependencies.');
     await runProcess(uv, ['pip', 'install', '--python', py, 'setuptools>=70', 'wheel', 'packaging'], { cwd: repo, env });
+    sendLog('Installing Pixal3D inference dependencies missing from upstream requirements.txt.');
+    await runProcess(uv, ['pip', 'install', '--python', py, ...PIXAL3D_WINDOWS_INFERENCE_DEPS], { cwd: repo, env });
     sendLog('Skipping NATTEN on Windows: Pixal3D does not import it directly, and official 0.21.0 wheels are Linux-only. Using PyTorch SDPA attention fallback instead.');
     sendLog('Installing pinned community Windows CUDA wheels for Pixal3D mesh/texturing extensions (cumesh, flex_gemm, nvdiffrast, nvdiffrec_render, o_voxel).');
     await runProcess(uv, ['pip', 'install', '--python', py, ...pixal3dWindowsWheelRequirements()], { cwd: repo, env });
@@ -484,6 +494,13 @@ async function installPixal3D(request = {}) {
   sendLog(`Installing remaining Pixal3D dependencies from filtered ${requirements}. This can still be large and CUDA-specific.`);
   await runProcess(uv, ['pip', 'install', '--python', py, '--no-build-isolation', '-r', filteredRequirementsPath], { cwd: repo, env });
   await runProcess(uv, ['pip', 'install', '--python', py, 'https://github.com/LDYang694/Storages/releases/download/20260430/utils3d-0.0.2-py3-none-any.whl'], { cwd: repo, env });
+  if (process.platform === 'win32') {
+    sendLog('Verifying Pixal3D import surface before marking install ready.');
+    await runProcess(py, ['-c', 'import transformers, timm, kornia, imageio; from pixal3d.pipelines import Pixal3DImageTo3DPipeline; print("Pixal3D import check OK")'], {
+      cwd: repo,
+      env: pixal3dExecutionEnv(env),
+    });
+  }
   fs.writeFileSync(pixal3dInstallMarkerPath(), JSON.stringify({
     platform: process.platform,
     pythonVersion,
