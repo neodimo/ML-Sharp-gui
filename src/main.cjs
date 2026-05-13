@@ -370,8 +370,41 @@ async function installPixal3D(request = {}) {
   const requirements = fs.existsSync(path.join(repo, 'requirements-hfdemo.txt')) && process.platform !== 'win32'
     ? 'requirements-hfdemo.txt'
     : 'requirements.txt';
-  sendLog(`Installing Pixal3D dependencies from ${requirements}. This can be very large and CUDA-specific.`);
-  await runProcess(uv, ['pip', 'install', '--python', py, '-r', path.join(repo, requirements)], { cwd: repo, env });
+  const sourceRequirementsPath = path.join(repo, requirements);
+  const filteredRequirementsPath = path.join(root, `requirements-${process.platform}-no-natten.txt`);
+  const filteredRequirements = fs.readFileSync(sourceRequirementsPath, 'utf8')
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim().toLowerCase();
+      if (!trimmed || trimmed.startsWith('#')) return true;
+      if (trimmed.startsWith('natten')) return false;
+      if (trimmed.startsWith('torch==') || trimmed.startsWith('torchvision==')) return false;
+      if (trimmed.startsWith('triton==') && process.platform === 'win32') return false;
+      return true;
+    })
+    .join('\n');
+  fs.writeFileSync(filteredRequirementsPath, filteredRequirements);
+
+  sendLog('Pre-installing CUDA PyTorch for Pixal3D/NATTEN. This is large but avoids a known NATTEN build-isolation failure.');
+  if (process.platform === 'win32') {
+    await runProcess(uv, ['pip', 'install', '--python', py, '--index-url', 'https://download.pytorch.org/whl/cu126', 'torch==2.7.0', 'torchvision==0.22.0'], { cwd: repo, env });
+    sendLog('Installing NATTEN 0.21.0 wheel for Torch 2.7 / CUDA 12.6. If this falls back to a source build, Windows may require Visual Studio Build Tools + CUDA Toolkit.');
+    try {
+      await runProcess(uv, ['pip', 'install', '--python', py, 'natten==0.21.0+torch270cu126', '-f', 'https://whl.natten.org'], { cwd: repo, env });
+    } catch (err) {
+      sendLog('Official NATTEN wheel install failed. Retrying source build with torch visible and Ada RTX 40-series arch hint (SM 8.9).');
+      await runProcess(uv, ['pip', 'install', '--python', py, '--no-build-isolation', 'natten==0.21.0'], {
+        cwd: repo,
+        env: { ...env, NATTEN_CUDA_ARCH: '8.9', NATTEN_N_WORKERS: '8' },
+      });
+    }
+  } else {
+    await runProcess(uv, ['pip', 'install', '--python', py, '--extra-index-url', 'https://download.pytorch.org/whl/cu126', 'torch==2.7.0', 'torchvision==0.22.0'], { cwd: repo, env });
+    await runProcess(uv, ['pip', 'install', '--python', py, 'natten==0.21.0+torch270cu126', '-f', 'https://whl.natten.org'], { cwd: repo, env });
+  }
+
+  sendLog(`Installing remaining Pixal3D dependencies from filtered ${requirements}. This can still be large and CUDA-specific.`);
+  await runProcess(uv, ['pip', 'install', '--python', py, '--no-build-isolation', '-r', filteredRequirementsPath], { cwd: repo, env });
   await runProcess(uv, ['pip', 'install', '--python', py, 'https://github.com/LDYang694/Storages/releases/download/20260430/utils3d-0.0.2-py3-none-any.whl'], { cwd: repo, env });
   sendLog('Pixal3D experimental install complete.');
   sendJobState({ busy: false, label: 'Pixal3D ready' });
