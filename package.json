@@ -1,6 +1,6 @@
 {
   "name": "sharp-splat-sharp-wrapper",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Windows GUI wrapper for Apple ml-sharp single-image Gaussian Splat prediction.",
   "main": "src/main.cjs",
   "author": "Gonzo / OpenClaw",

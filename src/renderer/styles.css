@@ -103,6 +103,19 @@ button:disabled { opacity: 0.48; cursor: not-allowed; transform: none; }
 .status.good { color: #8be9a0; }
 .status.bad { color: #ff9da8; }
 .status.busy { color: #ffe08a; }
+.updatePanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.55rem;
+  align-items: center;
+  border: 1px solid rgba(141, 122, 255, 0.26);
+  background: rgba(141, 122, 255, 0.10);
+  border-radius: 14px;
+  padding: 0.65rem;
+  color: #e7e3ff;
+  font-size: 0.86rem;
+}
+.updatePanel span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .progressShell {
   height: 10px;
   overflow: hidden;

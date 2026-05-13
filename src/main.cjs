@@ -2,6 +2,8 @@
 
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const { PNG } = require('pngjs');
@@ -10,6 +12,11 @@ const { clamp01 } = require('./lib/color.cjs');
 
 let mainWindow;
 let activeProcess = null;
+
+const APP_VERSION = require('../package.json').version;
+const UPDATE_OWNER = 'neodimo';
+const UPDATE_REPO = 'ML-Sharp-gui';
+const UPDATE_ASSET_RE = /SharpSplatSHARP.*win.*x64.*\.zip$/i;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -27,7 +34,13 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  if (hasPendingUpdate() && launchPendingUpdateInstaller()) {
+    app.quit();
+    return;
+  }
+  createWindow();
+});
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
@@ -57,6 +70,187 @@ function resourcesRoot() {
 
 function runtimeRoot() {
   return path.join(appRoot(), 'sharp-runtime');
+}
+
+function updateRoot() {
+  return path.join(appRoot(), 'updates');
+}
+
+function stagedUpdatePath() {
+  return path.join(updateRoot(), 'pending-update.json');
+}
+
+function compareVersions(a, b) {
+  const pa = String(a || '0').replace(/^v/i, '').split(/[^0-9]+/).filter(Boolean).map(Number);
+  const pb = String(b || '0').replace(/^v/i, '').split(/[^0-9]+/).filter(Boolean).map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const da = pa[i] || 0;
+    const db = pb[i] || 0;
+    if (da > db) return 1;
+    if (da < db) return -1;
+  }
+  return 0;
+}
+
+function githubApi(pathname) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.github.com',
+      path: pathname,
+      method: 'GET',
+      headers: {
+        'User-Agent': `ML-Sharp-gui/${APP_VERSION}`,
+        'Accept': 'application/vnd.github+json',
+      },
+    }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`GitHub update check failed (${res.statusCode}). If the repo is private, publish public release assets or configure an updater token.`));
+          return;
+        }
+        try { resolve(JSON.parse(body)); }
+        catch (err) { reject(err); }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+function expectedSha256FromBody(body, assetName) {
+  const text = String(body || '');
+  const escaped = assetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const nearAsset = new RegExp(`([a-fA-F0-9]{64}).{0,160}${escaped}|${escaped}.{0,160}([a-fA-F0-9]{64})`, 's');
+  const nearMatch = text.match(nearAsset);
+  if (nearMatch) return (nearMatch[1] || nearMatch[2]).toLowerCase();
+  const anyMatch = text.match(/\b[a-fA-F0-9]{64}\b/);
+  return anyMatch ? anyMatch[0].toLowerCase() : null;
+}
+
+async function checkForUpdates() {
+  const release = await githubApi(`/repos/${UPDATE_OWNER}/${UPDATE_REPO}/releases/latest`);
+  const tag = String(release.tag_name || '').replace(/^v/i, '');
+  const asset = (release.assets || []).find((item) => UPDATE_ASSET_RE.test(item.name || ''));
+  if (!asset) throw new Error('Latest release does not include a Windows x64 ZIP asset.');
+  return {
+    currentVersion: APP_VERSION,
+    latestVersion: tag || release.tag_name,
+    tagName: release.tag_name,
+    releaseName: release.name || release.tag_name,
+    releaseUrl: release.html_url,
+    assetName: asset.name,
+    assetSize: asset.size,
+    downloadUrl: asset.browser_download_url,
+    expectedSha256: expectedSha256FromBody(release.body, asset.name),
+    updateAvailable: compareVersions(tag || release.tag_name, APP_VERSION) > 0,
+  };
+}
+
+function downloadFile(url, outputPath) {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    const file = fs.createWriteStream(outputPath);
+    function request(nextUrl) {
+      https.get(nextUrl, { headers: { 'User-Agent': `ML-Sharp-gui/${APP_VERSION}` } }, (res) => {
+        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+          request(res.headers.location);
+          return;
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`Download failed (${res.statusCode}).`));
+          return;
+        }
+        res.pipe(file);
+        file.on('finish', () => file.close(resolve));
+      }).on('error', reject);
+    }
+    request(url);
+  });
+}
+
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+
+function hasPendingUpdate() {
+  return fs.existsSync(stagedUpdatePath());
+}
+
+function launchPendingUpdateInstaller() {
+  const pendingPath = stagedUpdatePath();
+  if (!fs.existsSync(pendingPath)) return false;
+  if (process.platform !== 'win32' || !app.isPackaged) return false;
+  const pending = JSON.parse(fs.readFileSync(pendingPath, 'utf8'));
+  const scriptPath = path.join(updateRoot(), 'apply-pending-update.ps1');
+  const extractDir = path.join(updateRoot(), 'extracted');
+  const backupDir = path.join(updateRoot(), 'backup-before-update');
+  const exePath = process.execPath;
+  const script = `
+$ErrorActionPreference = 'Stop'
+$pidToWait = ${process.pid}
+$zip = ${JSON.stringify(pending.zipPath)}
+$appDir = ${JSON.stringify(appRoot())}
+$extractDir = ${JSON.stringify(extractDir)}
+$backupDir = ${JSON.stringify(backupDir)}
+$pendingPath = ${JSON.stringify(pendingPath)}
+$exePath = ${JSON.stringify(exePath)}
+Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 450
+Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+Expand-Archive -LiteralPath $zip -DestinationPath $extractDir -Force
+$payload = Get-ChildItem -LiteralPath $extractDir -Directory | Select-Object -First 1
+if ($null -eq $payload) { throw 'Update ZIP did not contain an app folder.' }
+Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+Get-ChildItem -LiteralPath $appDir -Force | Where-Object { $_.Name -notin @('sharp-runtime','updates') } | ForEach-Object {
+  Move-Item -LiteralPath $_.FullName -Destination (Join-Path $backupDir $_.Name) -Force
+}
+Copy-Item -LiteralPath (Join-Path $payload.FullName '*') -Destination $appDir -Recurse -Force
+Remove-Item -LiteralPath $pendingPath -Force -ErrorAction SilentlyContinue
+Start-Process -FilePath $exePath -WorkingDirectory $appDir
+`;
+  fs.mkdirSync(updateRoot(), { recursive: true });
+  fs.writeFileSync(scriptPath, script, 'utf8');
+  spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  }).unref();
+  return true;
+}
+
+async function stageUpdate(updateInfo) {
+  if (!updateInfo || !updateInfo.downloadUrl) updateInfo = await checkForUpdates();
+  if (!updateInfo.updateAvailable) return { ...updateInfo, staged: false, message: 'Already up to date.' };
+  const zipPath = path.join(updateRoot(), `${updateInfo.tagName || updateInfo.latestVersion}-${updateInfo.assetName}`.replace(/[^a-zA-Z0-9._-]+/g, '_'));
+  sendLog(`Downloading update ${updateInfo.tagName || updateInfo.latestVersion}: ${updateInfo.assetName}`);
+  await downloadFile(updateInfo.downloadUrl, zipPath);
+  const actualSha256 = await sha256File(zipPath);
+  if (updateInfo.expectedSha256 && actualSha256 !== updateInfo.expectedSha256) {
+    fs.rmSync(zipPath, { force: true });
+    throw new Error(`Downloaded update checksum mismatch. Expected ${updateInfo.expectedSha256}, got ${actualSha256}.`);
+  }
+  const pending = {
+    ...updateInfo,
+    zipPath,
+    actualSha256,
+    appRoot: appRoot(),
+    runtimeRoot: runtimeRoot(),
+    stagedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(stagedUpdatePath(), JSON.stringify(pending, null, 2));
+  return { ...pending, staged: true, message: 'Update downloaded. Restart the app to finish installing.' };
 }
 
 function mlSharpSourcePath() {
@@ -364,6 +558,11 @@ function loadPlyPreview(filePath, maxPoints = 140000) {
     bounds: { minX, minY, minZ, maxX, maxY, maxZ },
   };
 }
+
+
+ipcMain.handle('get-app-version', async () => APP_VERSION);
+ipcMain.handle('check-for-updates', async () => checkForUpdates());
+ipcMain.handle('stage-update', async (_event, updateInfo) => stageUpdate(updateInfo));
 
 ipcMain.handle('select-input', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {

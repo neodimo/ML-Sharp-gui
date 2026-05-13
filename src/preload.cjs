@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('sharpSplat', {
   showInFolder: (filePath) => ipcRenderer.invoke('show-in-folder', filePath),
   openPath: (filePath) => ipcRenderer.invoke('open-path', filePath),
   loadPlyPreview: (filePath) => ipcRenderer.invoke('load-ply-preview', filePath),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  stageUpdate: (updateInfo) => ipcRenderer.invoke('stage-update', updateInfo),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   onLog: (handler) => {
     const listener = (_event, line) => handler(line);

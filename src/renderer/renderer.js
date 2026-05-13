@@ -48,6 +48,11 @@ const el = {
   runtimeInfo: $('runtimeInfo'),
   docsButton: $('docsButton'),
   runtimeButton: $('runtimeButton'),
+  updateButton: $('updateButton'),
+  updatePanel: $('updatePanel'),
+  updateInfo: $('updateInfo'),
+  downloadUpdate: $('downloadUpdate'),
+  releaseNotes: $('releaseNotes'),
   plyCanvas: $('plyCanvas'),
   viewerPlaceholder: $('viewerPlaceholder'),
   viewerInfo: $('viewerInfo'),
@@ -96,6 +101,8 @@ function setBusy(busy) {
   el.chooseOutputFolder.disabled = busy;
   el.installButton.disabled = busy;
   el.runButton.disabled = busy;
+  el.updateButton.disabled = busy;
+  el.downloadUpdate.disabled = busy;
   el.cancelButton.disabled = !busy;
 }
 
@@ -229,6 +236,48 @@ async function cancelJob() {
   setProgress('idle');
 }
 
+let lastUpdateInfo = null;
+
+async function checkForUpdates() {
+  setStatus('Checking GitHub Releases for updates…', 'busy');
+  try {
+    const info = await sharpSplat.checkForUpdates();
+    lastUpdateInfo = info;
+    if (info.updateAvailable) {
+      el.updateInfo.textContent = `Update available: ${info.currentVersion} → ${info.latestVersion} (${info.assetName})`;
+      el.updatePanel.classList.remove('hidden');
+      setStatus('Update available. Click Update to download it; restart the app after it is ready.', 'good');
+    } else {
+      el.updatePanel.classList.add('hidden');
+      setStatus(`Already up to date (${info.currentVersion}).`, 'good');
+    }
+  } catch (err) {
+    setStatus(`Update check failed: ${err.message || err}`, 'bad');
+  }
+}
+
+async function downloadUpdate() {
+  setBusy(true);
+  setStatus('Downloading update…', 'busy');
+  setProgress('busy');
+  try {
+    const result = await sharpSplat.stageUpdate(lastUpdateInfo);
+    lastUpdateInfo = result;
+    if (result.staged) {
+      el.updateInfo.textContent = `Update ready: ${result.latestVersion}. Restart the app to finish.`;
+      setStatus('Update downloaded. Restart the app to finish installing.', 'good');
+      setProgress('done');
+    } else {
+      setStatus(result.message || 'Already up to date.', 'good');
+      setProgress('idle');
+    }
+  } catch (err) {
+    setStatus(`Update failed: ${err.message || err}`, 'bad');
+  } finally {
+    setBusy(false);
+  }
+}
+
 let previewTimer = null;
 function schedulePreviewRefresh() {
   if (!state.inputPath) return;
@@ -248,6 +297,11 @@ el.installButton.addEventListener('click', installRuntime);
 el.runButton.addEventListener('click', runSharp);
 el.cancelButton.addEventListener('click', cancelJob);
 el.runtimeButton.addEventListener('click', () => checkRuntime(true));
+el.updateButton.addEventListener('click', checkForUpdates);
+el.downloadUpdate.addEventListener('click', downloadUpdate);
+el.releaseNotes.addEventListener('click', () => {
+  if (lastUpdateInfo && lastUpdateInfo.releaseUrl) sharpSplat.openExternal(lastUpdateInfo.releaseUrl);
+});
 el.docsButton.addEventListener('click', () => sharpSplat.openExternal('https://github.com/apple/ml-sharp'));
 el.sourceColorSpace.addEventListener('change', refreshInputPreview);
 el.toneMap.addEventListener('change', refreshInputPreview);
