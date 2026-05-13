@@ -32,7 +32,7 @@ h2 { font-size: 1rem; color: #f7f7fb; }
   font-size: 0.72rem;
   margin-bottom: 0.22rem;
 }
-.headerActions { display: flex; gap: 0.5rem; }
+.headerActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; }
 main {
   display: grid;
   grid-template-columns: minmax(360px, 440px) minmax(0, 1fr);
@@ -100,6 +100,7 @@ button:disabled { opacity: 0.48; cursor: not-allowed; transform: none; }
 .grid.two { grid-template-columns: 1fr 1fr; }
 .buttonGrid { display: grid; grid-template-columns: 1fr 1fr auto; gap: 0.55rem; }
 .status { min-height: 2.4em; color: #c6ccdc; font-size: 0.9rem; line-height: 1.35; }
+.status.subtle { min-height: 1.3em; color: #8f98ad; font-size: 0.82rem; }
 .status.good { color: #8be9a0; }
 .status.bad { color: #ff9da8; }
 .status.busy { color: #ffe08a; }

@@ -15,6 +15,7 @@
       <div class="headerActions">
         <button id="docsButton" class="ghost">SHARP repo</button>
         <button id="updateButton" class="ghost">Check updates</button>
+        <button id="restartUpdateButton" class="primary hidden">Restart to update</button>
         <button id="runtimeButton" class="ghost">Check runtime</button>
       </div>
     </header>
@@ -79,11 +80,7 @@
         </div>
 
         <p id="status" class="status">Choose an input frame to start.</p>
-        <div id="updatePanel" class="updatePanel hidden">
-          <span id="updateInfo">Update available.</span>
-          <button id="downloadUpdate" class="primary">Update</button>
-          <button id="releaseNotes" class="ghost">Release</button>
-        </div>
+        <p id="updateStatus" class="status subtle">Updates are available in installed builds.</p>
         <div class="progressShell" aria-label="Job progress">
           <div id="progressBar" class="progressBar"></div>
         </div>

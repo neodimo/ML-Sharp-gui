@@ -1,6 +1,6 @@
 {
   "name": "sharp-splat-sharp-wrapper",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Windows GUI wrapper for Apple ml-sharp single-image Gaussian Splat prediction.",
   "main": "src/main.cjs",
   "author": "Gonzo / OpenClaw",
@@ -9,15 +9,63 @@
   "scripts": {
     "start": "electron .",
     "smoke": "node scripts/smoke-test.cjs",
-    "pack:win": "electron-packager . SharpSplatSHARP --platform=win32 --arch=x64 --out=dist --overwrite --asar --prune=true --extra-resource=vendor/ml-sharp --extra-resource=vendor/uv --ignore='^/dist($|/)' --ignore='^/runtime($|/)' --ignore='^/sharp-runtime($|/)' --ignore='^/test-output($|/)' --ignore='^/vendor/ml-sharp($|/)' --ignore='^/vendor/uv($|/)'"
+    "pack:win-folder": "electron-packager . SharpSplatSHARP --platform=win32 --arch=x64 --out=dist --overwrite --asar --prune=true --extra-resource=vendor/ml-sharp --extra-resource=vendor/uv --ignore='^/dist($|/)' --ignore='^/runtime($|/)' --ignore='^/sharp-runtime($|/)' --ignore='^/test-output($|/)' --ignore='^/vendor/ml-sharp($|/)' --ignore='^/vendor/uv($|/)'",
+    "dist:win": "electron-builder --win nsis --x64 --publish never",
+    "dist:win:publish": "electron-builder --win nsis --x64 --publish always"
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "jpeg-js": "^0.4.4",
     "parse-exr": "^1.0.2",
     "pngjs": "^7.0.0"
   },
   "devDependencies": {
     "@electron/packager": "^20.0.0",
-    "electron": "^42.0.1"
+    "electron": "^42.0.1",
+    "electron-builder": "^26.8.1"
+  },
+  "productName": "ML-Sharp GUI",
+  "build": {
+    "appId": "com.neodimo.mlsharpgui",
+    "productName": "ML-Sharp GUI",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/ml-sharp",
+        "to": "ml-sharp"
+      },
+      {
+        "from": "vendor/uv",
+        "to": "uv"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "ML-Sharp-GUI-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "neodimo",
+        "repo": "ML-Sharp-gui"
+      }
+    ]
   }
 }
