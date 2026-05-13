@@ -5,6 +5,7 @@ build/
 test-output/
 sharp-runtime/
 runtime/
+updates/
 models/
 model-cache/
 cache/
@@ -17,5 +18,13 @@ output/
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cache/
+.cache/
+coverage/
 .DS_Store
 Thumbs.db
