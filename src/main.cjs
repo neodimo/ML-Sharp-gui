@@ -150,17 +150,32 @@ function runProcess(command, args, options = {}) {
       shell: false,
     });
     activeProcess = child;
-    sendLog(`> ${[command, ...args].map(quoteForLog).join(' ')}`);
-    child.stdout.on('data', (data) => sendLog(data.toString().trimEnd()));
-    child.stderr.on('data', (data) => sendLog(data.toString().trimEnd()));
+    const commandLine = [command, ...args].map(quoteForLog).join(' ');
+    const recentOutput = [];
+    const rememberOutput = (chunk) => {
+      const text = chunk.toString().trimEnd();
+      if (!text) return;
+      sendLog(text);
+      for (const line of text.split(/\r?\n/)) {
+        recentOutput.push(line);
+        if (recentOutput.length > 40) recentOutput.shift();
+      }
+    };
+    sendLog(`> ${commandLine}`);
+    child.stdout.on('data', rememberOutput);
+    child.stderr.on('data', rememberOutput);
     child.on('error', (err) => {
       activeProcess = null;
+      err.message = `${err.message}\nCommand: ${commandLine}`;
       reject(err);
     });
     child.on('close', (code) => {
       activeProcess = null;
       if (code === 0) resolve();
-      else reject(new Error(`Command exited with code ${code}`));
+      else {
+        const tail = recentOutput.length ? `\n\nLast output:\n${recentOutput.join('\n')}` : '';
+        reject(new Error(`Command exited with code ${code}\nCommand: ${commandLine}${tail}`));
+      }
     });
   });
 }
