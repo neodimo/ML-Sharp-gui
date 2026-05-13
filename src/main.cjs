@@ -184,19 +184,20 @@ function patchPixal3DWindowsSource(repo) {
     throw new Error('Pixal3D sparse attention files were not found for Windows SDPA patching.');
   }
 
-  let sparseConfig = fs.readFileSync(sparseConfigPath, 'utf8');
+  let sparseConfig = fs.readFileSync(sparseConfigPath, 'utf8').replace(/\r\n/g, '\n');
   sparseConfig = sparseConfig
     .replace("ATTN = 'flash_attn'", "ATTN = 'sdpa'")
     .replace("['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4']", "['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4', 'sdpa']")
     .replace("Literal['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4']", "Literal['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4', 'sdpa']");
   fs.writeFileSync(sparseConfigPath, sparseConfig);
 
-  let sparseAttention = fs.readFileSync(sparseAttentionPath, 'utf8');
+  let sparseAttention = fs.readFileSync(sparseAttentionPath, 'utf8').replace(/\r\n/g, '\n');
   if (!sparseAttention.includes('Windows-native SDPA fallback')) {
-    const marker = "    if config.ATTN == 'xformers':\n";
+    const marker = "    if config.ATTN == 'xformers':";
     const fallback = `    # Windows-native SDPA fallback: slower than flash-attn/xformers, but avoids\n    # Linux-only CUDA wheels and keeps the experimental provider inside the app.\n    def _sdpa_varlen(q, k, v, q_seqlen, kv_seqlen):\n        outs = []\n        q_off = 0\n        kv_off = 0\n        for n in range(len(q_seqlen)):\n            qn = q_seqlen[n]\n            kn = kv_seqlen[n]\n            q_i = q[q_off:q_off + qn].transpose(0, 1).unsqueeze(0)\n            k_i = k[kv_off:kv_off + kn].transpose(0, 1).unsqueeze(0)\n            v_i = v[kv_off:kv_off + kn].transpose(0, 1).unsqueeze(0)\n            out_i = torch.nn.functional.scaled_dot_product_attention(\n                q_i, k_i, v_i, dropout_p=0.0, is_causal=False\n            )[0]\n            outs.append(out_i.transpose(0, 1))\n            q_off += qn\n            kv_off += kn\n        return torch.cat(outs, dim=0)\n\n    if num_all_args == 1:\n        q, k, v = qkv.unbind(dim=1)\n    elif num_all_args == 2:\n        k, v = kv.unbind(dim=1)\n\n`;
-    if (!sparseAttention.includes(marker)) throw new Error('Pixal3D sparse attention dispatch marker changed upstream.');
-    sparseAttention = sparseAttention.replace(marker, fallback + marker);
+    const markerAt = sparseAttention.indexOf(marker);
+    if (markerAt < 0) throw new Error('Pixal3D sparse attention dispatch marker changed upstream.');
+    sparseAttention = `${sparseAttention.slice(0, markerAt)}${fallback}${sparseAttention.slice(markerAt)}`;
   }
 
   const raiseText = "    else:\n        raise ValueError(f\"Unknown attention module: {config.ATTN}\")\n";
