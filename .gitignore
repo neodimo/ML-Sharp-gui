@@ -1,0 +1,7 @@
+node_modules/
+dist/
+test-output/
+sharp-runtime/
+runtime/
+*.log
+.DS_Store

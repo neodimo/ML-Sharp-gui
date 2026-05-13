@@ -1,0 +1,23 @@
+{
+  "name": "sharp-splat-sharp-wrapper",
+  "version": "0.2.0",
+  "description": "Windows GUI wrapper for Apple ml-sharp single-image Gaussian Splat prediction.",
+  "main": "src/main.cjs",
+  "author": "Gonzo / OpenClaw",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "smoke": "node scripts/smoke-test.cjs",
+    "pack:win": "electron-packager . SharpSplatSHARP --platform=win32 --arch=x64 --out=dist --overwrite --asar --prune=true --extra-resource=vendor/ml-sharp --extra-resource=vendor/uv --ignore='^/dist($|/)' --ignore='^/runtime($|/)' --ignore='^/sharp-runtime($|/)' --ignore='^/test-output($|/)' --ignore='^/vendor/ml-sharp($|/)' --ignore='^/vendor/uv($|/)'"
+  },
+  "dependencies": {
+    "jpeg-js": "^0.4.4",
+    "parse-exr": "^1.0.2",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.0.0",
+    "electron": "^42.0.1"
+  }
+}

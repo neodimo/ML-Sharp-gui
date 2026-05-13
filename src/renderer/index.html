@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SharpSplat SHARP Wrapper</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <p class="eyebrow">SharpSplat SHARP Wrapper</p>
+        <h1>Apple SHARP single-frame → 3DGS PLY</h1>
+      </div>
+      <div class="headerActions">
+        <button id="docsButton" class="ghost">SHARP repo</button>
+        <button id="runtimeButton" class="ghost">Check runtime</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel controls">
+        <div class="notice">
+          Real SHARP path: the app converts EXR if needed, then runs <code>sharp predict</code> and writes Apple SHARP’s standard 3DGS <code>.ply</code>. First run installs the Python/PyTorch runtime into a portable <code>sharp-runtime</code> folder next to the exe.
+        </div>
+
+        <label>Input frame</label>
+        <div class="row">
+          <input id="inputPath" readonly placeholder="Choose EXR, PNG, JPG, or JPEG" />
+          <button id="chooseInput">Choose</button>
+        </div>
+
+        <label>Output folder</label>
+        <div class="row">
+          <input id="outputFolder" readonly placeholder="Choose where SHARP should write .ply" />
+          <button id="chooseOutputFolder">Folder</button>
+        </div>
+
+        <div class="grid two">
+          <div>
+            <label>EXR input color</label>
+            <select id="sourceColorSpace">
+              <option value="acescg">ACEScg / AP1 linear</option>
+              <option value="srgb-linear">Linear sRGB / Rec.709</option>
+              <option value="display-srgb">Display sRGB</option>
+              <option value="srgb-encoded">Encoded sRGB values</option>
+            </select>
+          </div>
+          <div>
+            <label>EXR tone map</label>
+            <select id="toneMap">
+              <option value="filmic">Filmic/ACES-ish</option>
+              <option value="reinhard">Reinhard</option>
+              <option value="clip">Clip</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <div>
+            <label>EXR exposure: <span id="exposureValue">0.0</span> stops</label>
+            <input id="exposureStops" type="range" min="-5" max="5" value="0" step="0.1" />
+          </div>
+          <div>
+            <label>SHARP device</label>
+            <select id="device">
+              <option value="default">Auto</option>
+              <option value="cuda">CUDA</option>
+              <option value="cpu">CPU</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="buttonGrid">
+          <button id="installButton" class="ghost">Install/check runtime</button>
+          <button id="runButton" class="primary">Run SHARP</button>
+          <button id="cancelButton" class="danger" disabled>Cancel</button>
+        </div>
+
+        <p id="status" class="status">Choose an input frame to start.</p>
+        <div id="resultActions" class="row hidden">
+          <button id="showPly" class="ghost">Show .ply</button>
+          <button id="openFolder" class="ghost">Open folder</button>
+        </div>
+      </section>
+
+      <section class="rightColumn">
+        <article class="viewport panel">
+          <div class="viewportHeader">
+            <h2>Input / inference preview</h2>
+            <span id="inputInfo"></span>
+          </div>
+          <div class="previewShell">
+            <img id="inputPreview" alt="Input preview" />
+            <span id="inputPlaceholder" class="placeholder">No frame loaded</span>
+          </div>
+        </article>
+
+        <article class="panel logPanel">
+          <div class="viewportHeader">
+            <h2>Runtime log</h2>
+            <span id="runtimeInfo">Not checked</span>
+          </div>
+          <pre id="log"></pre>
+        </article>
+      </section>
+    </main>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
