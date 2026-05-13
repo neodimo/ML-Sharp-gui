@@ -78,7 +78,11 @@
         </div>
 
         <p id="status" class="status">Choose an input frame to start.</p>
+        <div class="progressShell" aria-label="Job progress">
+          <div id="progressBar" class="progressBar"></div>
+        </div>
         <div id="resultActions" class="row hidden">
+          <button id="viewPly" class="primary">View .ply</button>
           <button id="showPly" class="ghost">Show .ply</button>
           <button id="openFolder" class="ghost">Open folder</button>
         </div>
@@ -93,6 +97,18 @@
           <div class="previewShell">
             <img id="inputPreview" alt="Input preview" />
             <span id="inputPlaceholder" class="placeholder">No frame loaded</span>
+          </div>
+        </article>
+
+        <article class="viewer panel">
+          <div class="viewportHeader">
+            <h2>PLY preview</h2>
+            <span id="viewerInfo">Run SHARP, then view the .ply</span>
+          </div>
+          <div class="viewerShell">
+            <canvas id="plyCanvas" width="900" height="420"></canvas>
+            <span id="viewerPlaceholder" class="placeholder">No PLY loaded</span>
+            <div class="viewerHelp">Drag rotate • Wheel zoom • Double-click reset</div>
           </div>
         </article>
 

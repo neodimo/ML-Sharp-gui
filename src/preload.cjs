@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('sharpSplat', {
   cancelJob: () => ipcRenderer.invoke('cancel-job'),
   showInFolder: (filePath) => ipcRenderer.invoke('show-in-folder', filePath),
   openPath: (filePath) => ipcRenderer.invoke('open-path', filePath),
+  loadPlyPreview: (filePath) => ipcRenderer.invoke('load-ply-preview', filePath),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   onLog: (handler) => {
     const listener = (_event, line) => handler(line);

@@ -223,6 +223,148 @@ function findNewestPly(outputDir) {
   return files[0] || null;
 }
 
+function sigmoid(v) {
+  if (!Number.isFinite(v)) return 0.5;
+  return 1 / (1 + Math.exp(-v));
+}
+
+function clampByte(v) {
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(255, Math.round(v)));
+}
+
+function propertyByteSize(type) {
+  return ({
+    char: 1, uchar: 1, int8: 1, uint8: 1,
+    short: 2, ushort: 2, int16: 2, uint16: 2,
+    int: 4, uint: 4, int32: 4, uint32: 4,
+    float: 4, float32: 4, double: 8, float64: 8,
+  })[type] || 4;
+}
+
+function readProperty(buffer, offset, type, littleEndian) {
+  switch (type) {
+    case 'char': case 'int8': return buffer.readInt8(offset);
+    case 'uchar': case 'uint8': return buffer.readUInt8(offset);
+    case 'short': case 'int16': return littleEndian ? buffer.readInt16LE(offset) : buffer.readInt16BE(offset);
+    case 'ushort': case 'uint16': return littleEndian ? buffer.readUInt16LE(offset) : buffer.readUInt16BE(offset);
+    case 'int': case 'int32': return littleEndian ? buffer.readInt32LE(offset) : buffer.readInt32BE(offset);
+    case 'uint': case 'uint32': return littleEndian ? buffer.readUInt32LE(offset) : buffer.readUInt32BE(offset);
+    case 'double': case 'float64': return littleEndian ? buffer.readDoubleLE(offset) : buffer.readDoubleBE(offset);
+    case 'float': case 'float32': default: return littleEndian ? buffer.readFloatLE(offset) : buffer.readFloatBE(offset);
+  }
+}
+
+function parsePlyHeader(buffer) {
+  const marker = Buffer.from('end_header');
+  const markerAt = buffer.indexOf(marker);
+  if (markerAt < 0) throw new Error('Invalid PLY: missing end_header.');
+  let dataOffset = markerAt + marker.length;
+  if (buffer[dataOffset] === 13 && buffer[dataOffset + 1] === 10) dataOffset += 2;
+  else if (buffer[dataOffset] === 10) dataOffset += 1;
+  const headerText = buffer.slice(0, markerAt + marker.length).toString('utf8');
+  const lines = headerText.split(/\r?\n/);
+  let format = 'ascii';
+  let vertexCount = 0;
+  const props = [];
+  let inVertex = false;
+  for (const line of lines) {
+    const parts = line.trim().split(/\s+/);
+    if (parts[0] === 'format') format = parts[1];
+    else if (parts[0] === 'element') {
+      inVertex = parts[1] === 'vertex';
+      if (inVertex) vertexCount = Number(parts[2] || 0);
+    } else if (inVertex && parts[0] === 'property' && parts[1] !== 'list') {
+      props.push({ type: parts[1], name: parts[2], size: propertyByteSize(parts[1]) });
+    }
+  }
+  if (!vertexCount || !props.length) throw new Error('Invalid PLY: no vertex properties found.');
+  return { format, vertexCount, props, dataOffset };
+}
+
+function colorFromProperties(values) {
+  if ('red' in values && 'green' in values && 'blue' in values) {
+    return [clampByte(values.red), clampByte(values.green), clampByte(values.blue)];
+  }
+  if ('r' in values && 'g' in values && 'b' in values) {
+    return [clampByte(values.r), clampByte(values.g), clampByte(values.b)];
+  }
+  if ('f_dc_0' in values && 'f_dc_1' in values && 'f_dc_2' in values) {
+    const shC0 = 0.28209479177387814;
+    return [
+      clampByte((0.5 + shC0 * values.f_dc_0) * 255),
+      clampByte((0.5 + shC0 * values.f_dc_1) * 255),
+      clampByte((0.5 + shC0 * values.f_dc_2) * 255),
+    ];
+  }
+  const a = 'opacity' in values ? sigmoid(values.opacity) : 1;
+  const shade = clampByte(150 + 105 * a);
+  return [shade, shade, shade];
+}
+
+function loadPlyPreview(filePath, maxPoints = 140000) {
+  if (!filePath || !fs.existsSync(filePath)) throw new Error('PLY file does not exist.');
+  const buffer = fs.readFileSync(filePath);
+  const header = parsePlyHeader(buffer);
+  const stride = header.props.reduce((sum, prop) => sum + prop.size, 0);
+  const sampleStep = Math.max(1, Math.ceil(header.vertexCount / maxPoints));
+  const count = Math.ceil(header.vertexCount / sampleStep);
+  const positions = new Float32Array(count * 3);
+  const colors = new Uint8Array(count * 3);
+  let written = 0;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+
+  if (header.format === 'ascii') {
+    const text = buffer.slice(header.dataOffset).toString('utf8');
+    const lines = text.split(/\r?\n/);
+    for (let i = 0; i < header.vertexCount && i < lines.length; i += sampleStep) {
+      const fields = lines[i].trim().split(/\s+/).map(Number);
+      if (fields.length < header.props.length) continue;
+      const values = {};
+      header.props.forEach((prop, idx) => { values[prop.name] = fields[idx]; });
+      const x = Number(values.x), y = Number(values.y), z = Number(values.z);
+      if (![x, y, z].every(Number.isFinite)) continue;
+      const p = written * 3;
+      positions[p] = x; positions[p + 1] = y; positions[p + 2] = z;
+      colors.set(colorFromProperties(values), p);
+      minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+      maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+      written++;
+    }
+  } else if (header.format === 'binary_little_endian' || header.format === 'binary_big_endian') {
+    const littleEndian = header.format === 'binary_little_endian';
+    for (let i = 0; i < header.vertexCount; i += sampleStep) {
+      let offset = header.dataOffset + i * stride;
+      if (offset + stride > buffer.length) break;
+      const values = {};
+      for (const prop of header.props) {
+        values[prop.name] = readProperty(buffer, offset, prop.type, littleEndian);
+        offset += prop.size;
+      }
+      const x = Number(values.x), y = Number(values.y), z = Number(values.z);
+      if (![x, y, z].every(Number.isFinite)) continue;
+      const p = written * 3;
+      positions[p] = x; positions[p + 1] = y; positions[p + 2] = z;
+      colors.set(colorFromProperties(values), p);
+      minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+      maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+      written++;
+    }
+  } else {
+    throw new Error(`Unsupported PLY format '${header.format}'.`);
+  }
+
+  if (!written) throw new Error('PLY contained no readable vertices.');
+  return {
+    vertexCount: header.vertexCount,
+    shownCount: written,
+    positions: Array.from(positions.slice(0, written * 3)),
+    colors: Array.from(colors.slice(0, written * 3)),
+    bounds: { minX, minY, minZ, maxX, maxY, maxZ },
+  };
+}
+
 ipcMain.handle('select-input', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Choose one frame for SHARP',
@@ -322,6 +464,8 @@ ipcMain.handle('open-path', async (_event, filePath) => {
   await shell.openPath(filePath);
   return true;
 });
+
+ipcMain.handle('load-ply-preview', async (_event, filePath) => loadPlyPreview(filePath));
 
 ipcMain.handle('open-external', async (_event, url) => {
   if (typeof url === 'string' && /^https?:\/\//.test(url)) {

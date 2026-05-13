@@ -8,6 +8,18 @@ const state = {
   outputFolder: '',
   outputPly: '',
   busy: false,
+  progressMode: 'idle',
+  viewer: {
+    positions: [],
+    colors: [],
+    bounds: null,
+    rotX: -0.28,
+    rotY: 0.45,
+    zoom: 1,
+    dragging: false,
+    lastX: 0,
+    lastY: 0,
+  },
 };
 
 const el = {
@@ -25,8 +37,10 @@ const el = {
   cancelButton: $('cancelButton'),
   status: $('status'),
   resultActions: $('resultActions'),
+  viewPly: $('viewPly'),
   showPly: $('showPly'),
   openFolder: $('openFolder'),
+  progressBar: $('progressBar'),
   inputPreview: $('inputPreview'),
   inputPlaceholder: $('inputPlaceholder'),
   inputInfo: $('inputInfo'),
@@ -34,6 +48,9 @@ const el = {
   runtimeInfo: $('runtimeInfo'),
   docsButton: $('docsButton'),
   runtimeButton: $('runtimeButton'),
+  plyCanvas: $('plyCanvas'),
+  viewerPlaceholder: $('viewerPlaceholder'),
+  viewerInfo: $('viewerInfo'),
 };
 
 function setStatus(message, kind = '') {
@@ -48,8 +65,33 @@ function appendLog(line) {
   if (atBottom) el.log.scrollTop = el.log.scrollHeight;
 }
 
+function setProgress(mode, percent = 0) {
+  state.progressMode = mode;
+  el.progressBar.classList.toggle('indeterminate', mode === 'busy');
+  if (mode === 'idle') {
+    el.progressBar.style.width = '0%';
+  } else if (mode === 'done') {
+    el.progressBar.style.width = '100%';
+  } else if (mode === 'busy') {
+    el.progressBar.style.width = '42%';
+  } else {
+    el.progressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+  }
+}
+
+function updateProgressFromLog(line) {
+  const text = String(line || '').toLowerCase();
+  if (!state.busy) return;
+  if (text.includes('installing/checking')) setProgress('busy');
+  else if (text.includes('converting exr')) setProgress('fixed', 20);
+  else if (text.includes('predict') || text.includes('running sharp')) setProgress('busy');
+  else if (text.includes('ply written')) setProgress('done');
+}
+
 function setBusy(busy) {
   state.busy = busy;
+  if (busy) setProgress('busy');
+  else if (state.progressMode === 'busy') setProgress('idle');
   el.chooseInput.disabled = busy;
   el.chooseOutputFolder.disabled = busy;
   el.installButton.disabled = busy;
@@ -89,6 +131,7 @@ async function refreshInputPreview() {
     el.inputPlaceholder.classList.add('hidden');
     el.inputInfo.textContent = `${info.width}×${info.height} • ${info.source.toUpperCase()} • ${el.sourceColorSpace.value}`;
     setStatus('Input loaded. Choose output folder, then run SHARP.', 'good');
+    setProgress('idle');
   } catch (err) {
     el.inputPreview.removeAttribute('src');
     el.inputPreview.classList.add('hidden');
@@ -138,7 +181,9 @@ async function installRuntime() {
   setStatus('Installing/checking runtime… first run can be large.', 'busy');
   try {
     await sharpSplat.installRuntime();
-    await checkRuntime(false);
+    await setProgress('idle');
+checkRuntime(false);
+drawPlyViewer();
     setStatus('Runtime ready.', 'good');
   } catch (err) {
     setStatus(`Runtime install failed: ${err.message || err}`, 'bad');
@@ -158,6 +203,7 @@ async function runSharp() {
   }
   el.resultActions.classList.add('hidden');
   state.outputPly = '';
+  setProgress('busy');
   setBusy(true);
   setStatus('Running SHARP…', 'busy');
   try {
@@ -167,6 +213,8 @@ async function runSharp() {
     const size = result.sizeBytes ? ` • ${humanBytes(result.sizeBytes)}` : '';
     const converted = result.converted ? ' Converted EXR to inference PNG first.' : '';
     setStatus(`Done: ${result.outputPly}${size}.${converted}`, 'good');
+    setProgress('done');
+    await loadPlyViewer(result.outputPly);
   } catch (err) {
     setStatus(`SHARP failed: ${err.message || err}`, 'bad');
   } finally {
@@ -178,6 +226,7 @@ async function cancelJob() {
   await sharpSplat.cancelJob();
   setBusy(false);
   setStatus('Cancelled.', 'busy');
+  setProgress('idle');
 }
 
 let previewTimer = null;
@@ -187,7 +236,7 @@ function schedulePreviewRefresh() {
   previewTimer = setTimeout(refreshInputPreview, 250);
 }
 
-sharpSplat.onLog((line) => appendLog(line));
+sharpSplat.onLog((line) => { appendLog(line); updateProgressFromLog(line); });
 sharpSplat.onJobState((jobState) => {
   if (jobState && typeof jobState.busy === 'boolean') setBusy(jobState.busy);
   if (jobState && jobState.label) appendLog(`[${jobState.label}]`);
@@ -212,6 +261,122 @@ el.showPly.addEventListener('click', () => {
 el.openFolder.addEventListener('click', () => {
   if (state.outputFolder) sharpSplat.openPath(state.outputFolder);
 });
+el.viewPly.addEventListener('click', () => loadPlyViewer());
+
+
+function resizeCanvasToDisplaySize() {
+  const rect = el.plyCanvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(1, Math.floor(rect.width * dpr));
+  const height = Math.max(1, Math.floor(rect.height * dpr));
+  if (el.plyCanvas.width !== width || el.plyCanvas.height !== height) {
+    el.plyCanvas.width = width;
+    el.plyCanvas.height = height;
+  }
+  return dpr;
+}
+
+function resetViewerCamera() {
+  state.viewer.rotX = -0.28;
+  state.viewer.rotY = 0.45;
+  state.viewer.zoom = 1;
+  drawPlyViewer();
+}
+
+function drawPlyViewer() {
+  const canvas = el.plyCanvas;
+  const ctx = canvas.getContext('2d');
+  const dpr = resizeCanvasToDisplaySize();
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#080b12';
+  ctx.fillRect(0, 0, width, height);
+
+  const { positions, colors, bounds, rotX, rotY, zoom } = state.viewer;
+  if (!positions.length || !bounds) return;
+
+  const cx = (bounds.minX + bounds.maxX) * 0.5;
+  const cy = (bounds.minY + bounds.maxY) * 0.5;
+  const cz = (bounds.minZ + bounds.maxZ) * 0.5;
+  const extent = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, bounds.maxZ - bounds.minZ, 1e-6);
+  const scale = Math.min(width, height) * 0.72 * zoom / extent;
+  const sinX = Math.sin(rotX), cosX = Math.cos(rotX);
+  const sinY = Math.sin(rotY), cosY = Math.cos(rotY);
+  const pts = [];
+
+  for (let i = 0; i < positions.length; i += 3) {
+    let x = positions[i] - cx;
+    let y = positions[i + 1] - cy;
+    let z = positions[i + 2] - cz;
+    const x1 = x * cosY + z * sinY;
+    const z1 = -x * sinY + z * cosY;
+    const y2 = y * cosX - z1 * sinX;
+    const z2 = y * sinX + z1 * cosX;
+    pts.push({
+      x: width * 0.5 + x1 * scale,
+      y: height * 0.5 - y2 * scale,
+      z: z2,
+      r: colors[i],
+      g: colors[i + 1],
+      b: colors[i + 2],
+    });
+  }
+
+  pts.sort((a, b) => a.z - b.z);
+  const radius = Math.max(0.75 * dpr, Math.min(2.2 * dpr, 70000 / Math.max(positions.length, 1)));
+  for (const pt of pts) {
+    ctx.fillStyle = `rgb(${pt.r},${pt.g},${pt.b})`;
+    ctx.fillRect(pt.x, pt.y, radius, radius);
+  }
+}
+
+async function loadPlyViewer(filePath = state.outputPly) {
+  if (!filePath) return;
+  el.viewerInfo.textContent = 'Loading PLY…';
+  try {
+    const ply = await sharpSplat.loadPlyPreview(filePath);
+    state.viewer.positions = ply.positions;
+    state.viewer.colors = ply.colors;
+    state.viewer.bounds = ply.bounds;
+    state.outputPly = filePath;
+    el.viewerPlaceholder.classList.add('hidden');
+    el.viewerInfo.textContent = `${ply.shownCount.toLocaleString()} / ${ply.vertexCount.toLocaleString()} points shown`;
+    resetViewerCamera();
+  } catch (err) {
+    el.viewerPlaceholder.classList.remove('hidden');
+    el.viewerInfo.textContent = `PLY preview failed: ${err.message || err}`;
+  }
+}
+
+el.plyCanvas.addEventListener('pointerdown', (event) => {
+  state.viewer.dragging = true;
+  state.viewer.lastX = event.clientX;
+  state.viewer.lastY = event.clientY;
+  el.plyCanvas.setPointerCapture(event.pointerId);
+});
+el.plyCanvas.addEventListener('pointermove', (event) => {
+  if (!state.viewer.dragging) return;
+  const dx = event.clientX - state.viewer.lastX;
+  const dy = event.clientY - state.viewer.lastY;
+  state.viewer.lastX = event.clientX;
+  state.viewer.lastY = event.clientY;
+  state.viewer.rotY += dx * 0.008;
+  state.viewer.rotX += dy * 0.008;
+  drawPlyViewer();
+});
+el.plyCanvas.addEventListener('pointerup', () => { state.viewer.dragging = false; });
+el.plyCanvas.addEventListener('wheel', (event) => {
+  event.preventDefault();
+  state.viewer.zoom *= event.deltaY < 0 ? 1.12 : 0.89;
+  state.viewer.zoom = Math.max(0.08, Math.min(80, state.viewer.zoom));
+  drawPlyViewer();
+}, { passive: false });
+el.plyCanvas.addEventListener('dblclick', resetViewerCamera);
+window.addEventListener('resize', drawPlyViewer);
+
 
 el.inputPreview.classList.add('hidden');
+setProgress('idle');
 checkRuntime(false);
+drawPlyViewer();

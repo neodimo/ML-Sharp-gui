@@ -6,11 +6,13 @@ Windows GUI wrapper for Apple `ml-sharp`: one frame in, standard 3D Gaussian Spl
 
 - GUI input picker for `.exr`, `.png`, `.jpg`, `.jpeg`
 - Output folder picker
-- Input preview
+- Fixed-size input preview
 - EXR path: converts ACEScg/linear EXR to tone-mapped sRGB PNG for SHARP inference while preserving the original EXR
 - Runs Apple SHARP via `sharp predict -i <input> -o <folder>`
-- Streams the runtime log into the GUI
+- Streams the runtime log into its own scrollable pane
+- Shows a coarse progress bar for install/conversion/inference activity
 - Opens/shows the output `.ply`
+- Loads the generated `.ply` into a built-in point-cloud preview with drag-rotate and wheel-zoom controls
 
 ## Why portable folder, not a single-file exe?
 
@@ -30,4 +32,5 @@ Apple SHARP source is bundled under the app's `resources/ml-sharp` folder. The P
 
 - SHARP can run prediction on CPU, CUDA, or MPS, but Windows will usually be CPU or CUDA.
 - Rendering preview trajectories from Apple SHARP requires CUDA; this wrapper only runs prediction/export for now.
+- The built-in `.ply` viewer is a lightweight point-cloud preview, not a full Gaussian splat renderer yet.
 - The output `.ply` is Apple SHARP's own 3DGS PLY, not the fallback textured-card approximation.
