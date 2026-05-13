@@ -1,6 +1,8 @@
-# SharpSplat SHARP Wrapper
+# ML-Sharp GUI
 
-Windows GUI wrapper for Apple `ml-sharp`: one frame in, standard 3D Gaussian Splat `.ply` out.
+Independent Windows GUI wrapper for Apple `ml-sharp` / SHARP: one frame in, standard 3D Gaussian Splat `.ply` out.
+
+This is not an Apple product, is not affiliated with Apple, and is not endorsed by Apple.
 
 ## What this does
 
@@ -37,6 +39,13 @@ That keeps app updates from reinstalling the Python/PyTorch/model runtime every 
 5. Choose an input frame and output folder, then run.
 
 Apple SHARP source is bundled under the app's `resources/ml-sharp` folder. The Python environment installs into the user-data `sharp-runtime/venv` folder.
+
+## Licensing / attribution
+
+- ML-Sharp GUI wrapper code is licensed under MIT. See `LICENSE`.
+- Apple `ml-sharp` / SHARP source is vendored under `vendor/ml-sharp` and remains governed by Apple's license and model license. See `vendor/ml-sharp/LICENSE` and `vendor/ml-sharp/LICENSE_MODEL`.
+- Bundled `uv` Windows binaries under `vendor/uv` come from Astral's `uv` project and remain under upstream uv licensing.
+- See `NOTICE` for attribution and no-endorsement notes.
 
 ## Notes
 

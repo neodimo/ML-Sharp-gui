@@ -1,0 +1,28 @@
+ML-Sharp GUI Notices
+====================
+
+ML-Sharp GUI is an independent Windows GUI wrapper for Apple's ml-sharp / SHARP project. It is not an Apple product, is not affiliated with Apple, and is not endorsed by Apple.
+
+Project wrapper code
+--------------------
+Unless otherwise noted, the ML-Sharp GUI wrapper code in this repository is licensed under the MIT License. See ./LICENSE.
+
+Apple ml-sharp / SHARP
+----------------------
+This repository vendors Apple ml-sharp source under ./vendor/ml-sharp for convenience. Apple ml-sharp remains governed by its own license terms and model license, including attribution and no-endorsement requirements. See:
+
+- ./vendor/ml-sharp/LICENSE
+- ./vendor/ml-sharp/LICENSE_MODEL
+- ./vendor/ml-sharp/ACKNOWLEDGEMENTS, when present
+
+Do not use Apple names, trademarks, service marks, or logos to imply endorsement of this wrapper.
+
+uv binaries
+-----------
+This repository includes uv Windows binaries under ./vendor/uv to bootstrap the Python runtime. uv is developed by Astral and is licensed under Apache-2.0 or MIT, at your option. Source and license details are available at:
+
+- https://github.com/astral-sh/uv
+
+Runtime downloads
+-----------------
+On first use, the app may download Python packages, PyTorch, gsplat, torchvision, and SHARP/model assets into the user's application data runtime directory. Those downloaded components remain subject to their own upstream licenses and terms.

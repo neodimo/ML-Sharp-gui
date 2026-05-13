@@ -4,7 +4,7 @@
   "description": "Windows GUI wrapper for Apple ml-sharp single-image Gaussian Splat prediction.",
   "main": "src/main.cjs",
   "author": "Gonzo / OpenClaw",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "start": "electron .",
@@ -34,6 +34,8 @@
     "files": [
       "src/**/*",
       "package.json",
+      "LICENSE",
+      "NOTICE",
       "node_modules/**/*"
     ],
     "extraResources": [
