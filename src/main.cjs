@@ -148,7 +148,7 @@ function pixal3dPythonPath() {
 }
 
 function pixal3dInstallMarkerPath() {
-  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v2.json' : 'install-linux-cuda-v1.json';
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v3.json' : 'install-linux-cuda-v1.json';
   return path.join(pixal3dRoot(), markerName);
 }
 
@@ -180,17 +180,27 @@ function pixal3dExecutionEnv(extra = {}) {
     // the experimental provider and keep SHARP's runtime untouched.
     ATTN_BACKEND: process.platform === 'win32' ? 'sdpa' : (extra.ATTN_BACKEND || process.env.ATTN_BACKEND || 'flash_attn'),
     SPARSE_ATTN_BACKEND: process.platform === 'win32' ? 'sdpa' : (extra.SPARSE_ATTN_BACKEND || process.env.SPARSE_ATTN_BACKEND || 'flash_attn'),
+    HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
+    PYTHONUNBUFFERED: '1',
   };
 }
 
 function patchPixal3DWindowsSource(repo) {
   if (process.platform !== 'win32') return;
 
+  const inferencePath = path.join(repo, 'inference.py');
   const sparseConfigPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'config.py');
   const sparseAttentionPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'attention', 'full_attn.py');
-  if (!fs.existsSync(sparseConfigPath) || !fs.existsSync(sparseAttentionPath)) {
-    throw new Error('Pixal3D sparse attention files were not found for Windows SDPA patching.');
+  if (!fs.existsSync(inferencePath) || !fs.existsSync(sparseConfigPath) || !fs.existsSync(sparseAttentionPath)) {
+    throw new Error('Pixal3D files were not found for Windows SDPA patching.');
   }
+
+  let inference = fs.readFileSync(inferencePath, 'utf8').replace(/\r\n/g, '\n');
+  inference = inference.replace(
+    'os.environ["ATTN_BACKEND"] = "flash_attn_3"',
+    'os.environ["ATTN_BACKEND"] = os.environ.get("ATTN_BACKEND", "sdpa")\nos.environ["SPARSE_ATTN_BACKEND"] = os.environ.get("SPARSE_ATTN_BACKEND", os.environ["ATTN_BACKEND"])'
+  );
+  fs.writeFileSync(inferencePath, inference);
 
   let sparseConfig = fs.readFileSync(sparseConfigPath, 'utf8').replace(/\r\n/g, '\n');
   sparseConfig = sparseConfig
@@ -218,7 +228,7 @@ function patchPixal3DWindowsSource(repo) {
     throw new Error('Pixal3D sparse attention fallback marker changed upstream.');
   }
   fs.writeFileSync(sparseAttentionPath, sparseAttention);
-  sendLog('Patched Pixal3D sparse attention to allow Windows PyTorch SDPA fallback.');
+  sendLog('Patched Pixal3D inference and sparse attention to allow Windows PyTorch SDPA fallback.');
 }
 
 function ensureDirs() {
@@ -521,8 +531,9 @@ async function runPixal3D(request = {}) {
   fs.mkdirSync(request.outputFolder, { recursive: true });
   sendJobState({ busy: true, label: 'Running Pixal3D experimental GLB' });
   sendLog('Running Pixal3D as an external experimental provider: image → GLB mesh/material output.');
+  sendLog('First Pixal3D run can sit quietly while Hugging Face downloads model weights; watch disk/network activity if the log pauses after a Hugging Face cache message.');
   const outputGlb = path.join(request.outputFolder, `${sanitizeStem(request.inputPath)}_pixal3d.glb`);
-  const args = ['inference.py', '--image', request.inputPath, '--output', outputGlb, '--seed', String(request.seed || 42)];
+  const args = ['-u', 'inference.py', '--image', request.inputPath, '--output', outputGlb, '--seed', String(request.seed || 42)];
   await runProcess(pixal3dPythonPath(), args, { cwd: pixal3dRepoPath(), env: pixal3dExecutionEnv() });
   const newest = fs.existsSync(outputGlb) ? { filePath: outputGlb, size: fs.statSync(outputGlb).size } : findNewestGlb(request.outputFolder);
   if (!newest) throw new Error('Pixal3D finished but no .glb was found in the output folder.');
