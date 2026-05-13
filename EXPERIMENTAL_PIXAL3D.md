@@ -30,6 +30,7 @@ Known risk points:
 - Windows uses community CUDA wheels from `visualbruno/ComfyUI-Trellis2`, pinned to a specific commit and SHA-256 hashes
 - Windows skips NATTEN because Pixal3D does not import it directly and official NATTEN `0.21.0` wheels are Linux-only
 - Windows patches Pixal3D sparse attention to use PyTorch SDPA instead of `flash_attn`/`xformers`; this should be slower but avoids WSL2-only wheels
+- Pixal3D's Hugging Face config currently asks for gated `briaai/RMBG-2.0`; the Windows experiment overrides the background-removal model to public `briaai/RMBG-1.4` by default. Set `PIXAL3D_REMBG_MODEL` before launching the app if you need a different compatible model.
 - very new upstream repo, no release/security policy yet
 - no Gradio `share=True` path is used by this integration
 
@@ -41,7 +42,7 @@ The Windows route is intentionally isolated and license-gated:
 2. Install PyTorch `2.7.0` / CUDA `12.8` wheels.
 3. Install pinned community Windows wheels for the mesh/texturing CUDA extensions: `cumesh`, `flex_gemm`, `nvdiffrast`, `nvdiffrec_render`, and `o_voxel`.
 4. Skip NATTEN on Windows. Upstream lists `natten==0.21.0`, but static inspection found no direct `import natten`/`from natten` in Pixal3D or MoGe. The actual attention paths use `flash_attn`, `xformers`, `sdpa`, or `naive` for dense attention, and sparse attention is patched to accept `sdpa`.
-5. Run Pixal3D with `ATTN_BACKEND=sdpa` and `SPARSE_ATTN_BACKEND=sdpa`.
+5. Run Pixal3D with `ATTN_BACKEND=sdpa`, `SPARSE_ATTN_BACKEND=sdpa`, and `PIXAL3D_REMBG_MODEL=briaai/RMBG-1.4` unless overridden.
 
 This is the best current bet for keeping the workflow inside the Windows application. It still needs a real RTX Windows smoke test because this Linux dev host cannot validate CUDA/Windows wheels.
 

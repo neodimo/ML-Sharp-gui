@@ -148,7 +148,7 @@ function pixal3dPythonPath() {
 }
 
 function pixal3dInstallMarkerPath() {
-  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v3.json' : 'install-linux-cuda-v1.json';
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v4.json' : 'install-linux-cuda-v1.json';
   return path.join(pixal3dRoot(), markerName);
 }
 
@@ -182,6 +182,7 @@ function pixal3dExecutionEnv(extra = {}) {
     SPARSE_ATTN_BACKEND: process.platform === 'win32' ? 'sdpa' : (extra.SPARSE_ATTN_BACKEND || process.env.SPARSE_ATTN_BACKEND || 'flash_attn'),
     HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
     PYTHONUNBUFFERED: '1',
+    PIXAL3D_REMBG_MODEL: process.platform === 'win32' ? (extra.PIXAL3D_REMBG_MODEL || process.env.PIXAL3D_REMBG_MODEL || 'briaai/RMBG-1.4') : (extra.PIXAL3D_REMBG_MODEL || process.env.PIXAL3D_REMBG_MODEL || ''),
   };
 }
 
@@ -191,7 +192,8 @@ function patchPixal3DWindowsSource(repo) {
   const inferencePath = path.join(repo, 'inference.py');
   const sparseConfigPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'config.py');
   const sparseAttentionPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'attention', 'full_attn.py');
-  if (!fs.existsSync(inferencePath) || !fs.existsSync(sparseConfigPath) || !fs.existsSync(sparseAttentionPath)) {
+  const rembgPath = path.join(repo, 'pixal3d', 'pipelines', 'rembg', 'BiRefNet.py');
+  if (!fs.existsSync(inferencePath) || !fs.existsSync(sparseConfigPath) || !fs.existsSync(sparseAttentionPath) || !fs.existsSync(rembgPath)) {
     throw new Error('Pixal3D files were not found for Windows SDPA patching.');
   }
 
@@ -201,6 +203,15 @@ function patchPixal3DWindowsSource(repo) {
     'os.environ["ATTN_BACKEND"] = os.environ.get("ATTN_BACKEND", "sdpa")\nos.environ["SPARSE_ATTN_BACKEND"] = os.environ.get("SPARSE_ATTN_BACKEND", os.environ["ATTN_BACKEND"])'
   );
   fs.writeFileSync(inferencePath, inference);
+
+  let rembg = fs.readFileSync(rembgPath, 'utf8').replace(/\r\n/g, '\n');
+  if (!rembg.includes('PIXAL3D_REMBG_MODEL')) {
+    const oldRembg = '    def __init__(self, model_name: str = "ZhengPeng7/BiRefNet"):\n        self.model = AutoModelForImageSegmentation.from_pretrained(\n            model_name, trust_remote_code=True\n        )';
+    const newRembg = '    def __init__(self, model_name: str = "ZhengPeng7/BiRefNet"):\n        import os\n        requested_model_name = model_name\n        model_name = os.environ.get("PIXAL3D_REMBG_MODEL") or model_name\n        if requested_model_name != model_name:\n            print(f"[RMBG] Using {model_name} instead of {requested_model_name}", flush=True)\n        try:\n            self.model = AutoModelForImageSegmentation.from_pretrained(\n                model_name, trust_remote_code=True\n            )\n        except Exception as exc:\n            if "gated repo" in str(exc).lower() or "401 client error" in str(exc).lower():\n                raise RuntimeError(\n                    f"Pixal3D background-removal model {model_name!r} is gated on Hugging Face. "\n                    "Accept access on Hugging Face and run with a token, or set PIXAL3D_REMBG_MODEL to a public compatible model such as briaai/RMBG-1.4."\n                ) from exc\n            raise';
+    if (!rembg.includes(oldRembg)) throw new Error('Pixal3D BiRefNet loader marker changed upstream.');
+    rembg = rembg.replace(oldRembg, newRembg);
+    fs.writeFileSync(rembgPath, rembg);
+  }
 
   let sparseConfig = fs.readFileSync(sparseConfigPath, 'utf8').replace(/\r\n/g, '\n');
   sparseConfig = sparseConfig
@@ -228,7 +239,7 @@ function patchPixal3DWindowsSource(repo) {
     throw new Error('Pixal3D sparse attention fallback marker changed upstream.');
   }
   fs.writeFileSync(sparseAttentionPath, sparseAttention);
-  sendLog('Patched Pixal3D inference and sparse attention to allow Windows PyTorch SDPA fallback.');
+  sendLog('Patched Pixal3D inference/sparse attention for Windows SDPA and public RMBG fallback.');
 }
 
 function ensureDirs() {
@@ -531,7 +542,8 @@ async function runPixal3D(request = {}) {
   fs.mkdirSync(request.outputFolder, { recursive: true });
   sendJobState({ busy: true, label: 'Running Pixal3D experimental GLB' });
   sendLog('Running Pixal3D as an external experimental provider: image → GLB mesh/material output.');
-  sendLog('First Pixal3D run can sit quietly while Hugging Face downloads model weights; watch disk/network activity if the log pauses after a Hugging Face cache message.');
+  sendLog('First Pixal3D run can sit quietly while Hugging Face downloads model weights; watch disk/network activity if the log pauses during model loading.');
+  if (process.platform === 'win32') sendLog(`Using Pixal3D background-removal model: ${pixal3dExecutionEnv().PIXAL3D_REMBG_MODEL}`);
   const outputGlb = path.join(request.outputFolder, `${sanitizeStem(request.inputPath)}_pixal3d.glb`);
   const args = ['-u', 'inference.py', '--image', request.inputPath, '--output', outputGlb, '--seed', String(request.seed || 42)];
   await runProcess(pixal3dPythonPath(), args, { cwd: pixal3dRepoPath(), env: pixal3dExecutionEnv() });
