@@ -14,6 +14,7 @@
       </div>
       <div class="headerActions">
         <button id="docsButton" class="ghost">SHARP repo</button>
+        <button id="pixalDocsButton" class="ghost">Pixal3D repo</button>
         <button id="updateButton" class="ghost">Check updates</button>
         <button id="restartUpdateButton" class="primary hidden">Restart to update</button>
         <button id="runtimeButton" class="ghost">Check runtime</button>
@@ -79,6 +80,20 @@
           <button id="cancelButton" class="danger" disabled>Cancel</button>
         </div>
 
+        <details class="experimental">
+          <summary>Experimental Pixal3D GLB provider</summary>
+          <div class="notice warning">
+            Pixal3D is <strong>academic/research-only</strong>, not for commercial/production use, and not intended for EU use. It installs into a separate <code>pixal3d-experimental</code> runtime and is not bundled into the public app path.
+          </div>
+          <label class="checkRow"><input id="pixalAccept" type="checkbox" /> I accept the Pixal3D license limits for this local experiment.</label>
+          <div class="buttonGrid">
+            <button id="pixalCheckButton" class="ghost">Check Pixal3D</button>
+            <button id="pixalInstallButton" class="ghost">Install Pixal3D</button>
+            <button id="pixalRunButton" class="primary">Run Pixal3D → GLB</button>
+          </div>
+          <p id="pixalStatus" class="status subtle">Disabled until license box is checked.</p>
+        </details>
+
         <p id="status" class="status">Choose an input frame to start.</p>
         <p id="updateStatus" class="status subtle">Updates are available in installed builds.</p>
         <div class="progressShell" aria-label="Job progress">
@@ -86,7 +101,7 @@
         </div>
         <div id="resultActions" class="row hidden">
           <button id="viewPly" class="primary">View .ply</button>
-          <button id="showPly" class="ghost">Show .ply</button>
+          <button id="showPly" class="ghost">Show output</button>
           <button id="openFolder" class="ghost">Open folder</button>
         </div>
       </section>

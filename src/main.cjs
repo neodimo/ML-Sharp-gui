@@ -130,6 +130,23 @@ function sharpExePath() {
   return path.join(runtimeRoot(), 'venv', 'bin', 'sharp');
 }
 
+function pixal3dRoot() {
+  return path.join(app.getPath('userData'), 'pixal3d-experimental');
+}
+
+function pixal3dRepoPath() {
+  return path.join(pixal3dRoot(), 'Pixal3D');
+}
+
+function pixal3dVenvPath() {
+  return path.join(pixal3dRoot(), 'venv');
+}
+
+function pixal3dPythonPath() {
+  if (process.platform === 'win32') return path.join(pixal3dVenvPath(), 'Scripts', 'python.exe');
+  return path.join(pixal3dVenvPath(), 'bin', 'python');
+}
+
 function ensureDirs() {
   migrateLegacyRuntimeIfNeeded();
   fs.mkdirSync(runtimeRoot(), { recursive: true });
@@ -273,7 +290,29 @@ async function prepareInferenceInput(inputPath, opts) {
   return { inferencePath: out, converted: true, convertedPath: out };
 }
 
+function findNewestByExt(outputDir, extension) {
+  if (!fs.existsSync(outputDir)) return null;
+  const wanted = String(extension || '').toLowerCase();
+  const files = fs.readdirSync(outputDir)
+    .filter((name) => name.toLowerCase().endsWith(wanted))
+    .map((name) => {
+      const filePath = path.join(outputDir, name);
+      const stat = fs.statSync(filePath);
+      return { filePath, mtime: stat.mtimeMs, size: stat.size };
+    })
+    .sort((a, b) => b.mtime - a.mtime);
+  return files[0] || null;
+}
+
 function findNewestPly(outputDir) {
+  return findNewestByExt(outputDir, '.ply');
+}
+
+function findNewestGlb(outputDir) {
+  return findNewestByExt(outputDir, '.glb');
+}
+
+function _oldFindNewestPly(outputDir) {
   if (!fs.existsSync(outputDir)) return null;
   const files = fs.readdirSync(outputDir)
     .filter((name) => name.toLowerCase().endsWith('.ply'))
@@ -284,6 +323,78 @@ function findNewestPly(outputDir) {
     })
     .sort((a, b) => b.mtime - a.mtime);
   return files[0] || null;
+}
+
+function checkPixal3DStatus() {
+  const root = pixal3dRoot();
+  const repo = pixal3dRepoPath();
+  const py = pixal3dPythonPath();
+  return {
+    root,
+    repo,
+    repoExists: fs.existsSync(path.join(repo, 'inference.py')),
+    python: py,
+    pythonExists: fs.existsSync(py),
+    ready: fs.existsSync(path.join(repo, 'inference.py')) && fs.existsSync(py),
+    license: 'Pixal3D academic-only, no commercial/production use, not intended for EU use.',
+  };
+}
+
+async function installPixal3D(request = {}) {
+  if (!request.acceptLicense) throw new Error('Pixal3D license gate not accepted. It is academic-only, non-production, and not intended for EU use.');
+  if (process.platform === 'win32') {
+    sendLog('Warning: Pixal3D upstream wheels target Linux CUDA/Python 3.10. Windows install is experimental and may fail.');
+  }
+  const root = pixal3dRoot();
+  const repo = pixal3dRepoPath();
+  fs.mkdirSync(root, { recursive: true });
+  sendJobState({ busy: true, label: 'Installing Pixal3D experimental backend' });
+  sendLog('Pixal3D experimental backend is isolated from the bundled SHARP runtime.');
+  sendLog('License gate accepted for local academic/research testing only; this is not bundled into the MIT app runtime.');
+
+  if (!fs.existsSync(path.join(repo, '.git'))) {
+    await runProcess('git', ['clone', '--depth', '1', 'https://github.com/TencentARC/Pixal3D.git', repo], { cwd: root });
+  } else {
+    await runProcess('git', ['fetch', '--depth', '1', 'origin', 'master'], { cwd: repo });
+    await runProcess('git', ['checkout', 'FETCH_HEAD'], { cwd: repo });
+  }
+
+  const uv = uvPath();
+  const env = {
+    UV_CACHE_DIR: path.join(root, 'uv-cache'),
+    UV_LINK_MODE: 'copy',
+    PIP_DISABLE_PIP_VERSION_CHECK: '1',
+  };
+  await runProcess(uv, ['venv', pixal3dVenvPath(), '--python', '3.10', '--python-preference', 'managed'], { env });
+  const py = pixal3dPythonPath();
+  const requirements = fs.existsSync(path.join(repo, 'requirements-hfdemo.txt')) && process.platform !== 'win32'
+    ? 'requirements-hfdemo.txt'
+    : 'requirements.txt';
+  sendLog(`Installing Pixal3D dependencies from ${requirements}. This can be very large and CUDA-specific.`);
+  await runProcess(uv, ['pip', 'install', '--python', py, '-r', path.join(repo, requirements)], { cwd: repo, env });
+  await runProcess(uv, ['pip', 'install', '--python', py, 'https://github.com/LDYang694/Storages/releases/download/20260430/utils3d-0.0.2-py3-none-any.whl'], { cwd: repo, env });
+  sendLog('Pixal3D experimental install complete.');
+  sendJobState({ busy: false, label: 'Pixal3D ready' });
+  return checkPixal3DStatus();
+}
+
+async function runPixal3D(request = {}) {
+  if (!request.acceptLicense) throw new Error('Pixal3D license gate not accepted.');
+  if (!request.inputPath || !fs.existsSync(request.inputPath)) throw new Error('Input file does not exist.');
+  if (!request.outputFolder) throw new Error('Choose an output folder first.');
+  const status = checkPixal3DStatus();
+  if (!status.ready) await installPixal3D(request);
+  fs.mkdirSync(request.outputFolder, { recursive: true });
+  sendJobState({ busy: true, label: 'Running Pixal3D experimental GLB' });
+  sendLog('Running Pixal3D as an external experimental provider: image → GLB mesh/material output.');
+  const outputGlb = path.join(request.outputFolder, `${sanitizeStem(request.inputPath)}_pixal3d.glb`);
+  const args = ['inference.py', '--image', request.inputPath, '--output', outputGlb, '--seed', String(request.seed || 42)];
+  await runProcess(pixal3dPythonPath(), args, { cwd: pixal3dRepoPath() });
+  const newest = fs.existsSync(outputGlb) ? { filePath: outputGlb, size: fs.statSync(outputGlb).size } : findNewestGlb(request.outputFolder);
+  if (!newest) throw new Error('Pixal3D finished but no .glb was found in the output folder.');
+  sendLog(`GLB written: ${newest.filePath}`);
+  sendJobState({ busy: false, label: 'Pixal3D complete' });
+  return { outputGlb: newest.filePath, sizeBytes: newest.size, provider: 'pixal3d-experimental' };
 }
 
 function sigmoid(v) {
@@ -491,6 +602,23 @@ ipcMain.handle('inspect-input', async (_event, inputPath, opts) => {
 });
 
 ipcMain.handle('check-runtime', checkRuntimeStatus);
+ipcMain.handle('check-pixal3d', async () => checkPixal3DStatus());
+ipcMain.handle('install-pixal3d', async (_event, request) => {
+  try {
+    return await installPixal3D(request || {});
+  } catch (err) {
+    sendJobState({ busy: false, label: 'Pixal3D install failed' });
+    throw err;
+  }
+});
+ipcMain.handle('run-pixal3d', async (_event, request) => {
+  try {
+    return await runPixal3D(request || {});
+  } catch (err) {
+    sendJobState({ busy: false, label: 'Pixal3D failed' });
+    throw err;
+  }
+});
 
 ipcMain.handle('install-runtime', async () => {
   try {

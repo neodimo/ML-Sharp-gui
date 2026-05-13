@@ -195,6 +195,11 @@ button:disabled { opacity: 0.48; cursor: not-allowed; transform: none; }
   line-height: 1.38;
   white-space: pre-wrap;
 }
+.warning { border-color: rgba(255, 224, 138, 0.32); background: rgba(255, 224, 138, 0.09); color: #fff1c2; }
+.experimental { border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 0.72rem; background: rgba(255,255,255,0.045); }
+.experimental summary { cursor: pointer; color: #ffe08a; font-weight: 800; margin-bottom: 0.65rem; }
+.checkRow { display: flex; gap: 0.55rem; align-items: flex-start; color: #d9deef; font-weight: 600; line-height: 1.35; }
+.checkRow input { width: auto; margin-top: 0.16rem; }
 code { color: #8be9dd; }
 @media (max-width: 980px) {
   html, body { overflow: auto; }

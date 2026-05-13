@@ -7,6 +7,7 @@ const state = {
   inputPath: '',
   outputFolder: '',
   outputPly: '',
+  outputFile: '',
   busy: false,
   progressMode: 'idle',
   viewer: {
@@ -48,6 +49,12 @@ const el = {
   runtimeInfo: $('runtimeInfo'),
   docsButton: $('docsButton'),
   runtimeButton: $('runtimeButton'),
+  pixalDocsButton: $('pixalDocsButton'),
+  pixalAccept: $('pixalAccept'),
+  pixalCheckButton: $('pixalCheckButton'),
+  pixalInstallButton: $('pixalInstallButton'),
+  pixalRunButton: $('pixalRunButton'),
+  pixalStatus: $('pixalStatus'),
   updateButton: $('updateButton'),
   restartUpdateButton: $('restartUpdateButton'),
   updateStatus: $('updateStatus'),
@@ -111,6 +118,7 @@ function readOptions() {
     exposureStops: Number(el.exposureStops.value),
     device: el.device.value,
     verbose: true,
+    acceptLicense: !!el.pixalAccept.checked,
   };
 }
 
@@ -235,6 +243,7 @@ async function runSharp() {
   try {
     const result = await sharpSplat.runSharp(readOptions());
     state.outputPly = result.outputPly;
+    state.outputFile = result.outputPly;
     el.resultActions.classList.remove('hidden');
     const size = result.sizeBytes ? ` • ${humanBytes(result.sizeBytes)}` : '';
     const converted = result.converted ? ' Converted EXR to inference PNG first.' : '';
@@ -243,6 +252,70 @@ async function runSharp() {
     await loadPlyViewer(result.outputPly);
   } catch (err) {
     setStatus(`SHARP failed: ${err.message || err}`, 'bad');
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function checkPixal3D(showGood = true) {
+  try {
+    const status = await sharpSplat.checkPixal3D();
+    el.pixalStatus.textContent = status.ready ? `Ready: ${status.repo}` : `Needs install: ${status.root}`;
+    appendLog(`Pixal3D root: ${status.root}`);
+    appendLog(`Pixal3D repo: ${status.repoExists ? status.repo : 'not cloned yet'}`);
+    appendLog(`Pixal3D Python: ${status.pythonExists ? status.python : 'not installed yet'}`);
+    if (showGood) setStatus(status.ready ? 'Pixal3D experimental backend ready.' : 'Pixal3D not installed yet.', status.ready ? 'good' : 'busy');
+    return status;
+  } catch (err) {
+    el.pixalStatus.textContent = `Pixal3D check failed: ${err.message || err}`;
+    return null;
+  }
+}
+
+function requirePixalLicense() {
+  if (el.pixalAccept.checked) return true;
+  const msg = 'Check the Pixal3D license box first: academic/research only, no commercial/production use, not intended for EU use.';
+  el.pixalStatus.textContent = msg;
+  setStatus(msg, 'bad');
+  return false;
+}
+
+async function installPixal3D() {
+  if (!requirePixalLicense()) return;
+  setBusy(true);
+  setStatus('Installing Pixal3D experimental backend… this can be large and CUDA-specific.', 'busy');
+  try {
+    await sharpSplat.installPixal3D(readOptions());
+    setStatus('Pixal3D experimental backend ready.', 'good');
+    await checkPixal3D(false);
+  } catch (err) {
+    setStatus(`Pixal3D install failed: ${err.message || err}`, 'bad');
+    el.pixalStatus.textContent = `Install failed: ${err.message || err}`;
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function runPixal3D() {
+  if (!requirePixalLicense()) return;
+  if (!state.inputPath) { setStatus('Choose an input frame first.', 'bad'); return; }
+  if (!state.outputFolder) { await chooseOutputFolder(); if (!state.outputFolder) return; }
+  el.resultActions.classList.add('hidden');
+  state.outputPly = '';
+  state.outputFile = '';
+  setProgress('busy');
+  setBusy(true);
+  setStatus('Running Pixal3D experimental GLB…', 'busy');
+  try {
+    const result = await sharpSplat.runPixal3D(readOptions());
+    state.outputFile = result.outputGlb;
+    el.resultActions.classList.remove('hidden');
+    const size = result.sizeBytes ? ` • ${humanBytes(result.sizeBytes)}` : '';
+    setStatus(`Pixal3D GLB done: ${result.outputGlb}${size}.`, 'good');
+    el.viewerInfo.textContent = 'GLB generated. Use Show output/open folder to inspect it in a GLB viewer.';
+    setProgress('done');
+  } catch (err) {
+    setStatus(`Pixal3D failed: ${err.message || err}`, 'bad');
   } finally {
     setBusy(false);
   }
@@ -292,9 +365,13 @@ el.installButton.addEventListener('click', installRuntime);
 el.runButton.addEventListener('click', runSharp);
 el.cancelButton.addEventListener('click', cancelJob);
 el.runtimeButton.addEventListener('click', () => checkRuntime(true));
+el.pixalCheckButton.addEventListener('click', () => checkPixal3D(true));
+el.pixalInstallButton.addEventListener('click', installPixal3D);
+el.pixalRunButton.addEventListener('click', runPixal3D);
 el.updateButton.addEventListener('click', checkForUpdates);
 el.restartUpdateButton.addEventListener('click', restartAndInstallUpdate);
 el.docsButton.addEventListener('click', () => sharpSplat.openExternal('https://github.com/apple/ml-sharp'));
+el.pixalDocsButton.addEventListener('click', () => sharpSplat.openExternal('https://github.com/TencentARC/Pixal3D'));
 el.sourceColorSpace.addEventListener('change', refreshInputPreview);
 el.toneMap.addEventListener('change', refreshInputPreview);
 el.exposureStops.addEventListener('input', () => {
@@ -302,7 +379,7 @@ el.exposureStops.addEventListener('input', () => {
   schedulePreviewRefresh();
 });
 el.showPly.addEventListener('click', () => {
-  if (state.outputPly) sharpSplat.showInFolder(state.outputPly);
+  if (state.outputFile || state.outputPly) sharpSplat.showInFolder(state.outputFile || state.outputPly);
 });
 el.openFolder.addEventListener('click', () => {
   if (state.outputFolder) sharpSplat.openPath(state.outputFolder);
@@ -425,4 +502,5 @@ window.addEventListener('resize', drawPlyViewer);
 el.inputPreview.classList.add('hidden');
 setProgress('idle');
 checkRuntime(false);
+checkPixal3D(false);
 drawPlyViewer();
