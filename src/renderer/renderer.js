@@ -10,6 +10,8 @@ const state = {
   outputFile: '',
   busy: false,
   progressMode: 'idle',
+  downloads: { active: false, startedAt: 0, totalBytes: 0, doneBytes: 0, files: new Map(), doneFiles: 0 },
+  longPhase: { active: false, label: '', startedAt: 0 },
   viewer: {
     positions: [],
     colors: [],
@@ -42,6 +44,7 @@ const el = {
   showPly: $('showPly'),
   openFolder: $('openFolder'),
   progressBar: $('progressBar'),
+  progressDetails: $('progressDetails'),
   inputPreview: $('inputPreview'),
   inputPlaceholder: $('inputPlaceholder'),
   inputInfo: $('inputInfo'),
@@ -100,11 +103,65 @@ async function copyLog() {
   }
 }
 
+
+function formatDuration(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function parseSizeToBytes(value, unit) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  const u = String(unit || '').toLowerCase();
+  if (u.startsWith('g')) return n * 1024 * 1024 * 1024;
+  if (u.startsWith('m')) return n * 1024 * 1024;
+  if (u.startsWith('k')) return n * 1024;
+  return n;
+}
+
+function resetDownloadProgress() {
+  state.downloads = { active: false, startedAt: 0, totalBytes: 0, doneBytes: 0, files: new Map(), doneFiles: 0 };
+}
+
+function setProgressDetails(message) {
+  if (el.progressDetails) el.progressDetails.textContent = message;
+}
+
+function updateDownloadDetails() {
+  const d = state.downloads;
+  if (!d.active || d.totalBytes <= 0) return;
+  const elapsedMs = Math.max(1, Date.now() - d.startedAt);
+  const speed = d.doneBytes / (elapsedMs / 1000);
+  const percent = Math.max(0, Math.min(99, (d.doneBytes / d.totalBytes) * 100));
+  setProgress('fixed', percent);
+  setProgressDetails(`Downloading packages: ${humanBytes(d.doneBytes)} / ${humanBytes(d.totalBytes)} (${percent.toFixed(0)}%) • avg ${humanBytes(speed)}/s • ${d.doneFiles}/${d.files.size} files`);
+}
+
+function startLongPhase(label) {
+  state.longPhase = { active: true, label, startedAt: Date.now() };
+  setProgress('busy');
+  setProgressDetails(`${label} • elapsed 0:00`);
+}
+
+function updateLongPhaseDetails() {
+  if (!state.longPhase.active) return;
+  setProgressDetails(`${state.longPhase.label} • elapsed ${formatDuration(Date.now() - state.longPhase.startedAt)}`);
+}
+
+setInterval(() => {
+  if (!state.busy) return;
+  updateDownloadDetails();
+  updateLongPhaseDetails();
+}, 1000);
+
 function setProgress(mode, percent = 0) {
   state.progressMode = mode;
   el.progressBar.classList.toggle('indeterminate', mode === 'busy');
   if (mode === 'idle') {
     el.progressBar.style.width = '0%';
+    setProgressDetails('Idle.');
   } else if (mode === 'done') {
     el.progressBar.style.width = '100%';
   } else if (mode === 'busy') {
@@ -115,12 +172,77 @@ function setProgress(mode, percent = 0) {
 }
 
 function updateProgressFromLog(line) {
-  const text = String(line || '').toLowerCase();
+  const raw = String(line || '');
+  const text = raw.toLowerCase();
   if (!state.busy) return;
-  if (text.includes('installing/checking')) setProgress('busy');
-  else if (text.includes('converting exr')) setProgress('fixed', 20);
-  else if (text.includes('predict') || text.includes('running sharp')) setProgress('busy');
-  else if (text.includes('ply written')) setProgress('done');
+
+  const downloading = raw.match(/^\s*Downloading\s+(.+?)\s+\((\d+(?:\.\d+)?)\s*([kmgt]?i?b)\)/i);
+  if (downloading) {
+    const name = downloading[1].trim();
+    const bytes = parseSizeToBytes(downloading[2], downloading[3]);
+    if (!state.downloads.active) {
+      resetDownloadProgress();
+      state.downloads.active = true;
+      state.downloads.startedAt = Date.now();
+      state.longPhase.active = false;
+    }
+    if (!state.downloads.files.has(name)) {
+      state.downloads.files.set(name, { bytes, done: false });
+      state.downloads.totalBytes += bytes;
+    }
+    updateDownloadDetails();
+    return;
+  }
+
+  const downloaded = raw.match(/^\s*Downloaded\s+(.+)$/i);
+  if (downloaded && state.downloads.active) {
+    const name = downloaded[1].trim();
+    const file = state.downloads.files.get(name);
+    if (file && !file.done) {
+      file.done = true;
+      state.downloads.doneBytes += file.bytes;
+      state.downloads.doneFiles += 1;
+    }
+    updateDownloadDetails();
+    return;
+  }
+
+  if (text.includes('prepared ') || text.includes('installed ') || text.includes('checked ')) {
+    if (state.downloads.active) {
+      state.downloads.doneBytes = Math.max(state.downloads.doneBytes, state.downloads.totalBytes);
+      updateDownloadDetails();
+      resetDownloadProgress();
+    }
+  }
+
+  if (text.includes('[pipeline] loading') || text.includes('hugging face') || text.includes('huggingface') || text.includes('from_pretrained')) {
+    if (!state.longPhase.active) startLongPhase('Downloading/loading Hugging Face model weights');
+    return;
+  }
+
+  if (text.includes('first pixal3d run can sit quietly')) {
+    startLongPhase('Waiting on Hugging Face model downloads / model load');
+    return;
+  }
+
+  if (text.includes('installing/checking')) {
+    setProgress('busy');
+    setProgressDetails('Installing/checking runtime…');
+  } else if (text.includes('converting exr')) {
+    setProgress('fixed', 20);
+    setProgressDetails('Converting EXR…');
+  } else if (text.includes('predict') || text.includes('running sharp')) {
+    setProgress('busy');
+    setProgressDetails('Running SHARP…');
+  } else if (text.includes('running pixal3d')) {
+    setProgress('busy');
+    setProgressDetails('Running Pixal3D…');
+  } else if (text.includes('ply written') || text.includes('glb written') || text.includes('complete')) {
+    state.longPhase.active = false;
+    resetDownloadProgress();
+    setProgress('done');
+    setProgressDetails('Done.');
+  }
 }
 
 function setBusy(busy) {
@@ -240,6 +362,7 @@ async function restartAndInstallUpdate() {
 }
 
 async function installRuntime() {
+  resetDownloadProgress();
   setBusy(true);
   setStatus('Installing/checking runtime… first run can be large.', 'busy');
   try {
@@ -257,6 +380,7 @@ async function installRuntime() {
 }
 
 async function runSharp() {
+  resetDownloadProgress();
   if (!state.inputPath) {
     setStatus('Choose an input frame first.', 'bad');
     return;
@@ -314,6 +438,7 @@ function requirePixalLicense() {
 
 async function installPixal3D() {
   if (!requirePixalLicense()) return;
+  resetDownloadProgress();
   setBusy(true);
   setStatus('Installing Pixal3D experimental backend… this can be large and CUDA-specific.', 'busy');
   try {
@@ -330,6 +455,7 @@ async function installPixal3D() {
 }
 
 async function runPixal3D() {
+  resetDownloadProgress();
   if (!requirePixalLicense()) return;
   if (!state.inputPath) { setStatus('Choose an input frame first.', 'bad'); return; }
   if (!state.outputFolder) { await chooseOutputFolder(); if (!state.outputFolder) return; }
@@ -369,7 +495,13 @@ function schedulePreviewRefresh() {
   previewTimer = setTimeout(refreshInputPreview, 250);
 }
 
-sharpSplat.onLog((line) => { appendLog(line); updateProgressFromLog(line); });
+sharpSplat.onLog((chunk) => {
+  for (const line of String(chunk || '').split(/\r?\n/)) {
+    if (!line) continue;
+    appendLog(line);
+    updateProgressFromLog(line);
+  }
+});
 sharpSplat.onJobState((jobState) => {
   if (jobState && typeof jobState.busy === 'boolean') setBusy(jobState.busy);
   if (jobState && jobState.label) appendLog(`[${jobState.label}]`);

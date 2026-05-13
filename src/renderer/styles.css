@@ -102,6 +102,7 @@ button.small { padding: 0.38rem 0.58rem; border-radius: 9px; font-size: 0.78rem;
 .buttonGrid { display: grid; grid-template-columns: 1fr 1fr auto; gap: 0.55rem; }
 .status { min-height: 2.4em; color: #c6ccdc; font-size: 0.9rem; line-height: 1.35; }
 .status.subtle { min-height: 1.3em; color: #8f98ad; font-size: 0.82rem; }
+#progressDetails { margin-top: -0.45rem; min-height: 1.2em; }
 .status.good { color: #8be9a0; }
 .status.bad { color: #ff9da8; }
 .status.busy { color: #ffe08a; }
