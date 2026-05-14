@@ -148,7 +148,7 @@ function pixal3dPythonPath() {
 }
 
 function pixal3dInstallMarkerPath() {
-  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v9.json' : 'install-linux-cuda-v1.json';
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v10.json' : 'install-linux-cuda-v1.json';
   return path.join(pixal3dRoot(), markerName);
 }
 
@@ -212,8 +212,14 @@ function patchPixal3DWindowsSource(repo) {
     const newRembg = '    def __init__(self, model_name: str = "ZhengPeng7/BiRefNet"):\n        import os\n        requested_model_name = model_name\n        model_name = os.environ.get("PIXAL3D_REMBG_MODEL") or model_name\n        if requested_model_name != model_name:\n            print(f"[RMBG] Using {model_name} instead of {requested_model_name}", flush=True)\n        try:\n            self.model = AutoModelForImageSegmentation.from_pretrained(\n                model_name, trust_remote_code=True\n            )\n        except Exception as exc:\n            if "gated repo" in str(exc).lower() or "401 client error" in str(exc).lower():\n                raise RuntimeError(\n                    f"Pixal3D background-removal model {model_name!r} is gated on Hugging Face. "\n                    "Accept access on Hugging Face and run with a token, or set PIXAL3D_REMBG_MODEL to a public compatible model such as briaai/RMBG-1.4."\n                ) from exc\n            raise';
     if (!rembg.includes(oldRembg)) throw new Error('Pixal3D BiRefNet loader marker changed upstream.');
     rembg = rembg.replace(oldRembg, newRembg);
-    fs.writeFileSync(rembgPath, rembg);
   }
+  if (!rembg.includes('raw_preds = self.model(input_images)')) {
+    const oldRembgCall = '        with torch.no_grad():\n            preds = self.model(input_images)[-1].sigmoid().cpu()';
+    const newRembgCall = '        with torch.no_grad():\n            raw_preds = self.model(input_images)\n            while isinstance(raw_preds, (list, tuple)):\n                raw_preds = raw_preds[-1]\n            if isinstance(raw_preds, dict):\n                for key in ("logits", "preds", "prediction", "out"):\n                    if key in raw_preds:\n                        raw_preds = raw_preds[key]\n                        break\n            if hasattr(raw_preds, "logits"):\n                raw_preds = raw_preds.logits\n            if not torch.is_tensor(raw_preds):\n                raise TypeError(f"Unsupported RMBG output type: {type(raw_preds)!r}")\n            preds = raw_preds.sigmoid().cpu()';
+    if (!rembg.includes(oldRembgCall)) throw new Error('Pixal3D BiRefNet call marker changed upstream.');
+    rembg = rembg.replace(oldRembgCall, newRembgCall);
+  }
+  fs.writeFileSync(rembgPath, rembg);
 
   let imageCond = fs.readFileSync(imageCondPath, 'utf8').replace(/\r\n/g, '\n');
   if (!imageCond.includes('Windows interpolation fallback')) {
