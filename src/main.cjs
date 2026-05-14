@@ -227,7 +227,7 @@ function patchPixal3DWindowsSource(repo) {
             )
             self.naf_model.eval()
             self.naf_model.requires_grad_(False)
-`;
+        `;
     const newLoadNaf = `    def _load_naf(self):
         """Lazy-load pretrained NAF model without torch.hub dependency preflight.
 
