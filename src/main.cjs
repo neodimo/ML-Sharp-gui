@@ -404,8 +404,17 @@ async function installRuntime() {
     PIP_DISABLE_PIP_VERSION_CHECK: '1',
   };
 
-  await runProcess(uv, ['venv', venvDir, '--python', '3.13', '--python-preference', 'managed'], { env });
   const py = venvPythonPath();
+  if (fs.existsSync(py)) {
+    sendLog(`Reusing existing Python virtual environment: ${venvDir}`);
+  } else {
+    const venvArgs = ['venv', venvDir, '--python', '3.13', '--python-preference', 'managed'];
+    if (fs.existsSync(venvDir)) {
+      sendLog('Found an incomplete previous SHARP venv; clearing and recreating it.');
+      venvArgs.push('--clear');
+    }
+    await runProcess(uv, venvArgs, { env });
+  }
 
   // Apple's requirements.txt contains `-e .`. For a portable app, install dependencies
   // first, then install ml-sharp non-editably so the bundled resources can stay read-only.
