@@ -227,10 +227,11 @@ li + li { margin-top: 0.35rem; }
 
 .quickPanel { padding: 1rem; }
 .rightRail .panel { flex: 0 0 auto; }
-.logPanel { min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0.85rem; }
-.logPanel[open] { flex: 1 1 auto; }
-.logActions { display: flex; justify-content: flex-end; padding: 0.72rem 0 0.55rem; }
-#log { flex: 1; min-height: 0; margin: 0; padding: 0.85rem; overflow: auto; color: #eadfcd; background: rgba(0, 0, 0, 0.34); border: 1px solid rgba(255, 238, 211, 0.08); border-radius: 14px; font-family: "Cascadia Mono", "Consolas", ui-monospace, SFMono-Regular, monospace; font-size: 0.76rem; line-height: 1.4; white-space: pre-wrap; }
+.logPanel { min-height: 260px; display: flex; flex-direction: column; overflow: hidden; padding: 0.85rem; }
+.logPanel[open] { flex: 1 1 360px; }
+.logPanel summary { flex: 0 0 auto; }
+.logActions { flex: 0 0 auto; display: flex; justify-content: flex-end; padding: 0.72rem 0 0.55rem; }
+#log { flex: 1 1 auto; min-height: 180px; max-height: 100%; margin: 0; padding: 0.85rem; overflow-y: scroll; overflow-x: auto; color: #eadfcd; background: rgba(0, 0, 0, 0.34); border: 1px solid rgba(255, 238, 211, 0.08); border-radius: 14px; font-family: "Cascadia Mono", "Consolas", ui-monospace, SFMono-Regular, monospace; font-size: 0.76rem; line-height: 1.4; white-space: pre-wrap; }
 
 @media (max-width: 1120px) {
   html, body { overflow: auto; }

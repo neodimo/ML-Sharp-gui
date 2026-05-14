@@ -148,7 +148,7 @@ function pixal3dPythonPath() {
 }
 
 function pixal3dInstallMarkerPath() {
-  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v10.json' : 'install-linux-cuda-v1.json';
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v11.json' : 'install-linux-cuda-v1.json';
   return path.join(pixal3dRoot(), markerName);
 }
 
@@ -215,7 +215,7 @@ function patchPixal3DWindowsSource(repo) {
   }
   if (!rembg.includes('raw_preds = self.model(input_images)')) {
     const oldRembgCall = '        with torch.no_grad():\n            preds = self.model(input_images)[-1].sigmoid().cpu()';
-    const newRembgCall = '        with torch.no_grad():\n            raw_preds = self.model(input_images)\n            while isinstance(raw_preds, (list, tuple)):\n                raw_preds = raw_preds[-1]\n            if isinstance(raw_preds, dict):\n                for key in ("logits", "preds", "prediction", "out"):\n                    if key in raw_preds:\n                        raw_preds = raw_preds[key]\n                        break\n            if hasattr(raw_preds, "logits"):\n                raw_preds = raw_preds.logits\n            if not torch.is_tensor(raw_preds):\n                raise TypeError(f"Unsupported RMBG output type: {type(raw_preds)!r}")\n            preds = raw_preds.sigmoid().cpu()';
+    const newRembgCall = '        with torch.no_grad():\n            raw_preds = self.model(input_images)\n            while isinstance(raw_preds, (list, tuple)):\n                raw_preds = raw_preds[-1]\n            if isinstance(raw_preds, dict):\n                for key in ("logits", "preds", "prediction", "out"):\n                    if key in raw_preds:\n                        raw_preds = raw_preds[key]\n                        break\n            if hasattr(raw_preds, "logits"):\n                raw_preds = raw_preds.logits\n            if not torch.is_tensor(raw_preds):\n                raise TypeError(f"Unsupported RMBG output type: {type(raw_preds)!r}")\n            preds = raw_preds.sigmoid().cpu()\n            if preds.ndim == 4:\n                preds = preds[:, :1, :, :]\n            elif preds.ndim == 3:\n                if preds.shape[0] > 4 and preds.shape[-1] > 4:\n                    preds = preds.unsqueeze(0).mean(dim=1, keepdim=True)\n                elif preds.shape[0] <= 4:\n                    preds = preds[:1].unsqueeze(0)\n                else:\n                    preds = preds[..., :1].permute(2, 0, 1).unsqueeze(0)\n            elif preds.ndim == 2:\n                preds = preds.unsqueeze(0).unsqueeze(0)';
     if (!rembg.includes(oldRembgCall)) throw new Error('Pixal3D BiRefNet call marker changed upstream.');
     rembg = rembg.replace(oldRembgCall, newRembgCall);
   }

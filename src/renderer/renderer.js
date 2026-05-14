@@ -75,9 +75,10 @@ function setStatus(message, kind = '') {
 function appendLog(line) {
   const text = String(line || '');
   if (!text) return;
-  const atBottom = el.log.scrollTop + el.log.clientHeight >= el.log.scrollHeight - 20;
   el.log.textContent += `${text}\n`;
-  if (atBottom) el.log.scrollTop = el.log.scrollHeight;
+  requestAnimationFrame(() => {
+    el.log.scrollTop = el.log.scrollHeight;
+  });
 }
 
 function appendError(label, err) {
