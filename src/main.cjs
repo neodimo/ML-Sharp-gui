@@ -148,7 +148,7 @@ function pixal3dPythonPath() {
 }
 
 function pixal3dInstallMarkerPath() {
-  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v8.json' : 'install-linux-cuda-v1.json';
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v9.json' : 'install-linux-cuda-v1.json';
   return path.join(pixal3dRoot(), markerName);
 }
 
@@ -216,28 +216,33 @@ function patchPixal3DWindowsSource(repo) {
   }
 
   let imageCond = fs.readFileSync(imageCondPath, 'utf8').replace(/\r\n/g, '\n');
-  if (!imageCond.includes('naf_checkpoint_url')) {
+  if (!imageCond.includes('Windows interpolation fallback')) {
     const newLoadNaf = `    def _load_naf(self):
-        """Lazy-load pretrained NAF model without torch.hub dependency preflight.
+        """Lazy-load a Windows-safe NAF replacement.
 
-        Downloads the NAF checkpoint from GitHub releases directly and loads it
-        using torch.load, bypassing torch.hub.load which requires 'natten' to
-        be importable (no CUDA wheels for Windows).
+        Upstream NAF depends on NATTEN. Official NATTEN wheels are Linux-only
+        for the versions Pixal3D wants, and torch.hub refuses to load NAF when
+        natten is absent. For the Windows experimental provider, preserve the
+        tensor contract by using deterministic interpolation for the high-res
+        feature branch. This is lower quality than true NAF, but keeps Pixal3D
+        runnable inside the Windows app without WSL2.
         """
         if self.naf_model is None:
-            from pathlib import Path
-            import os
             import torch
+            import torch.nn.functional as F
             device = next(self.model.parameters()).device
-            naf_checkpoint_url = "https://github.com/valeoai/NAF/releases/download/model/naf_release.pth"
-            naf_cache_dir = Path(os.path.expanduser("~/.cache/torch/hub/valeoai_NAF_main"))
-            naf_cache_dir.mkdir(parents=True, exist_ok=True)
-            local_ckpt = naf_cache_dir / "naf_release.pth"
-            if not local_ckpt.exists():
-                torch.hub.download_url_to_file(naf_checkpoint_url, str(local_ckpt), progress=True)
-            from src.model.naf import NAF
-            self.naf_model = NAF().to(device)
-            self.naf_model.load_state_dict(torch.load(str(local_ckpt), map_location=device))
+
+            class _WindowsInterpolationNAF(torch.nn.Module):
+                def forward(self, image, lr_features, output_size):
+                    return F.interpolate(
+                        lr_features,
+                        size=output_size,
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+
+            print("[NAF] Using Windows interpolation fallback instead of NATTEN-backed NAF", flush=True)
+            self.naf_model = _WindowsInterpolationNAF().to(device)
             self.naf_model.eval()
             self.naf_model.requires_grad_(False)
 `;
@@ -540,7 +545,7 @@ async function installPixal3D(request = {}) {
     await runProcess(uv, ['pip', 'install', '--python', py, 'setuptools>=70', 'wheel', 'packaging'], { cwd: repo, env });
     sendLog('Installing Pixal3D inference dependencies missing from upstream requirements.txt.');
     await runProcess(uv, ['pip', 'install', '--python', py, ...PIXAL3D_WINDOWS_INFERENCE_DEPS], { cwd: repo, env });
-    sendLog('Skipping NATTEN on Windows: Pixal3D does not import it directly, and official 0.21.0 wheels are Linux-only. Using PyTorch SDPA attention fallback instead.');
+    sendLog('Skipping NATTEN on Windows: official 0.21.0 wheels are Linux-only. Patched Pixal3D/NAF to use SDPA plus interpolation fallback instead.');
     sendLog('Installing pinned community Windows CUDA wheels for Pixal3D mesh/texturing extensions (cumesh, flex_gemm, nvdiffrast, nvdiffrec_render, o_voxel).');
     await runProcess(uv, ['pip', 'install', '--python', py, ...pixal3dWindowsWheelRequirements()], { cwd: repo, env });
   } else {
