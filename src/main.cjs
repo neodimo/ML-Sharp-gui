@@ -148,7 +148,7 @@ function pixal3dPythonPath() {
 }
 
 function pixal3dInstallMarkerPath() {
-  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v5.json' : 'install-linux-cuda-v1.json';
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v6.json' : 'install-linux-cuda-v1.json';
   return path.join(pixal3dRoot(), markerName);
 }
 
@@ -194,7 +194,8 @@ function patchPixal3DWindowsSource(repo) {
   const sparseConfigPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'config.py');
   const sparseAttentionPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'attention', 'full_attn.py');
   const rembgPath = path.join(repo, 'pixal3d', 'pipelines', 'rembg', 'BiRefNet.py');
-  if (!fs.existsSync(inferencePath) || !fs.existsSync(sparseConfigPath) || !fs.existsSync(sparseAttentionPath) || !fs.existsSync(rembgPath)) {
+  const imageCondPath = path.join(repo, 'pixal3d', 'trainers', 'flow_matching', 'mixins', 'image_conditioned_proj.py');
+  if (!fs.existsSync(inferencePath) || !fs.existsSync(sparseConfigPath) || !fs.existsSync(sparseAttentionPath) || !fs.existsSync(rembgPath) || !fs.existsSync(imageCondPath)) {
     throw new Error('Pixal3D files were not found for Windows SDPA patching.');
   }
 
@@ -212,6 +213,56 @@ function patchPixal3DWindowsSource(repo) {
     if (!rembg.includes(oldRembg)) throw new Error('Pixal3D BiRefNet loader marker changed upstream.');
     rembg = rembg.replace(oldRembg, newRembg);
     fs.writeFileSync(rembgPath, rembg);
+  }
+
+  let imageCond = fs.readFileSync(imageCondPath, 'utf8').replace(/\r\n/g, '\n');
+  if (!imageCond.includes('patch_naf_windows_attention')) {
+    const oldLoadNaf = `    def _load_naf(self):
+        """Lazy-load pretrained NAF model."""
+        if self.naf_model is None:
+            import torch.hub
+            device = next(self.model.parameters()).device
+            self.naf_model = torch.hub.load(
+                "valeoai/NAF", "naf", pretrained=True, device=device, trust_repo=True
+            )
+            self.naf_model.eval()
+            self.naf_model.requires_grad_(False)
+`;
+    const newLoadNaf = `    def _load_naf(self):
+        """Lazy-load pretrained NAF model."""
+        if self.naf_model is None:
+            import torch.hub
+            from pathlib import Path
+            device = next(self.model.parameters()).device
+
+            def patch_naf_windows_attention(repo_dir):
+                attentions_path = Path(repo_dir) / "src" / "layers" / "attentions.py"
+                if not attentions_path.exists():
+                    return
+                text = attentions_path.read_text(encoding="utf-8").replace("\\r\\n", "\\n")
+                if "WINDOWS_TORCH_LOCAL_ATTENTION_FALLBACK" in text:
+                    return
+                old_import = """try:\n    NATTEN_RECENT = False\n    from natten.functional import na2d_av, na2d_qk\nexcept:\n    NATTEN_RECENT = True\n    from natten import na2d\n"""
+                new_import = """try:\n    NATTEN_RECENT = False\n    NATTEN_AVAILABLE = True\n    from natten.functional import na2d_av, na2d_qk\nexcept Exception:\n    try:\n        NATTEN_RECENT = True\n        NATTEN_AVAILABLE = True\n        from natten import na2d\n    except Exception:\n        NATTEN_RECENT = False\n        NATTEN_AVAILABLE = False\n\n# WINDOWS_TORCH_LOCAL_ATTENTION_FALLBACK\ndef torch_local_attention(q, k, v, kernel_size, dilation, scale=1, return_weights=False):\n    kh, kw = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)\n    dh, dw = dilation if isinstance(dilation, tuple) else (dilation, dilation)\n    b, h, w, n, d = q.shape\n    q2 = rearrange(q, \"b h w n d -> (b n) d h w\")\n    k2 = rearrange(k, \"b h w n d -> (b n) d h w\")\n    v2 = rearrange(v, \"b h w n d -> (b n) d h w\")\n    pad = ((kw // 2) * dw, (kh // 2) * dh)\n    k_unf = F.unfold(k2, kernel_size=(kh, kw), dilation=(dh, dw), padding=pad)\n    v_unf = F.unfold(v2, kernel_size=(kh, kw), dilation=(dh, dw), padding=pad)\n    k_unf = k_unf.view(b * n, d, kh * kw, h * w)\n    v_unf = v_unf.view(b * n, d, kh * kw, h * w)\n    q_flat = q2.flatten(2)\n    scores = torch.einsum(\"bdp,bdkp->bkp\", q_flat, k_unf) * scale\n    weights = scores.softmax(dim=1)\n    out = torch.einsum(\"bkp,bdkp->bdp\", weights, v_unf).view(b * n, d, h, w)\n    out = rearrange(out, \"(b n) d h w -> b h w n d\", b=b, n=n)\n    if return_weights:\n        return out, scores\n    return out\n"""
+                if old_import not in text:
+                    return
+                text = text.replace(old_import, new_import)
+                old_forward = """        # Use legacy attention pattern\n        if return_weights:\n            assert not NATTEN_RECENT, \"Return weights not supported with recent natten versions\"\n            out, attn_weights = legacy_attention(q, k, v, self.kernel_size, dilation, scale=self.scale, return_weights=True)\n            return rearrange(out, \"b h w n d -> b (n d) h w\"), attn_weights\n        else:\n            if NATTEN_RECENT:\n                # Use modern na2d attention\n                # Note: Modern na2d doesn't support position bias directly\n                out = na2d(q, k, v, kernel_size=self.kernel_size, dilation=dilation, stride=1, backend=\"cutlass-fna\")\n            else:\n                out = legacy_attention(q, k, v, self.kernel_size, dilation, scale=self.scale)\n            return rearrange(out, \"b h w n d -> b (n d) h w\")\n"""
+                new_forward = """        # Use NATTEN when available; otherwise use a pure PyTorch local-attention fallback for Windows.\n        if return_weights:\n            if NATTEN_AVAILABLE:\n                assert not NATTEN_RECENT, \"Return weights not supported with recent natten versions\"\n                out, attn_weights = legacy_attention(q, k, v, self.kernel_size, dilation, scale=self.scale, return_weights=True)\n            else:\n                out, attn_weights = torch_local_attention(q, k, v, self.kernel_size, dilation, scale=self.scale, return_weights=True)\n            return rearrange(out, \"b h w n d -> b (n d) h w\"), attn_weights\n        else:\n            if NATTEN_AVAILABLE and NATTEN_RECENT:\n                out = na2d(q, k, v, kernel_size=self.kernel_size, dilation=dilation, stride=1, backend=\"cutlass-fna\")\n            elif NATTEN_AVAILABLE:\n                out = legacy_attention(q, k, v, self.kernel_size, dilation, scale=self.scale)\n            else:\n                out = torch_local_attention(q, k, v, self.kernel_size, dilation, scale=self.scale)\n            return rearrange(out, \"b h w n d -> b (n d) h w\")\n"""
+                text = text.replace(old_forward, new_forward)
+                attentions_path.write_text(text, encoding="utf-8")
+
+            repo_dir = torch.hub._get_cache_or_reload("valeoai/NAF", False, True, "load", verbose=True, skip_validation=False)
+            patch_naf_windows_attention(repo_dir)
+            self.naf_model = torch.hub.load(
+                repo_dir, "naf", source="local", pretrained=True, device=device, trust_repo=True
+            )
+            self.naf_model.eval()
+            self.naf_model.requires_grad_(False)
+`;
+    if (!imageCond.includes(oldLoadNaf)) throw new Error('Pixal3D NAF loader marker changed upstream.');
+    imageCond = imageCond.replace(oldLoadNaf, newLoadNaf);
+    fs.writeFileSync(imageCondPath, imageCond);
   }
 
   let sparseConfig = fs.readFileSync(sparseConfigPath, 'utf8').replace(/\r\n/g, '\n');
@@ -240,7 +291,7 @@ function patchPixal3DWindowsSource(repo) {
     throw new Error('Pixal3D sparse attention fallback marker changed upstream.');
   }
   fs.writeFileSync(sparseAttentionPath, sparseAttention);
-  sendLog('Patched Pixal3D inference/sparse attention for Windows SDPA and public RMBG fallback.');
+  sendLog('Patched Pixal3D inference/sparse attention/NAF for Windows SDPA and public RMBG fallback.');
 }
 
 function ensureDirs() {
