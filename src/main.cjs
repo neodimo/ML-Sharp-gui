@@ -217,17 +217,6 @@ function patchPixal3DWindowsSource(repo) {
 
   let imageCond = fs.readFileSync(imageCondPath, 'utf8').replace(/\r\n/g, '\n');
   if (!imageCond.includes('naf_checkpoint_url')) {
-    const oldLoadNaf = `    def _load_naf(self):
-        """Lazy-load pretrained NAF model."""
-        if self.naf_model is None:
-            import torch.hub
-            device = next(self.model.parameters()).device
-            self.naf_model = torch.hub.load(
-                "valeoai/NAF", "naf", pretrained=True, device=device, trust_repo=True
-            )
-            self.naf_model.eval()
-            self.naf_model.requires_grad_(False)
-        `;
     const newLoadNaf = `    def _load_naf(self):
         """Lazy-load pretrained NAF model without torch.hub dependency preflight.
 
@@ -252,8 +241,9 @@ function patchPixal3DWindowsSource(repo) {
             self.naf_model.eval()
             self.naf_model.requires_grad_(False)
 `;
-    if (!imageCond.includes(oldLoadNaf)) throw new Error('Pixal3D NAF loader marker changed upstream.');
-    imageCond = imageCond.replace(oldLoadNaf, newLoadNaf);
+    const loadNafMatch = imageCond.match(/    def _load_naf\(self\):\n[\s\S]*?(?=\n    def to\(self, device\):)/);
+    if (!loadNafMatch) throw new Error('Pixal3D NAF loader marker changed upstream.');
+    imageCond = imageCond.replace(loadNafMatch[0], newLoadNaf);
     fs.writeFileSync(imageCondPath, imageCond);
   }
 
@@ -500,6 +490,7 @@ async function installPixal3D(request = {}) {
   } else {
     await runProcess('git', ['fetch', '--depth', '1', 'origin', 'master'], { cwd: repo });
     await runProcess('git', ['checkout', 'FETCH_HEAD'], { cwd: repo });
+    await runProcess('git', ['reset', '--hard', 'FETCH_HEAD'], { cwd: repo });
   }
 
   patchPixal3DWindowsSource(repo);
