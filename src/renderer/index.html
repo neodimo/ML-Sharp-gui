@@ -3,145 +3,199 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>SharpSplat SHARP Wrapper</title>
+    <title>SharpSplatSHARP</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header>
-      <div>
-        <p class="eyebrow">SharpSplat SHARP Wrapper</p>
-        <h1>Apple SHARP single-frame → 3DGS PLY</h1>
+    <header class="appHeader">
+      <div class="brandBlock">
+        <div class="brandMark">S</div>
+        <div>
+          <p class="eyebrow">Image → 3D asset workstation</p>
+          <h1>SharpSplatSHARP</h1>
+        </div>
       </div>
       <div class="headerActions">
-        <button id="docsButton" class="ghost">SHARP repo</button>
-        <button id="pixalDocsButton" class="ghost">Pixal3D repo</button>
-        <button id="updateButton" class="ghost">Check updates</button>
-        <button id="restartUpdateButton" class="primary hidden">Restart to update</button>
-        <button id="runtimeButton" class="ghost">Check runtime</button>
+        <span id="runtimeInfo" class="pill">Checking runtime…</span>
+        <button id="updateButton" class="ghost small">Check updates</button>
+        <button id="restartUpdateButton" class="primary small hidden">Restart to update</button>
+        <button id="runtimeButton" class="ghost small">Runtime</button>
+        <button id="docsButton" class="ghost small">SHARP repo</button>
+        <button id="pixalDocsButton" class="ghost small">Pixal3D repo</button>
       </div>
     </header>
 
-    <main>
-      <section class="panel controls">
-        <div class="notice">
-          Real SHARP path: the app converts EXR if needed, then runs <code>sharp predict</code> and writes Apple SHARP’s standard 3DGS <code>.ply</code>. First run installs the Python/PyTorch runtime into a portable <code>sharp-runtime</code> folder next to the exe.
-        </div>
-
-        <label>Input frame</label>
-        <div class="row">
-          <input id="inputPath" readonly placeholder="Choose EXR, PNG, JPG, or JPEG" />
-          <button id="chooseInput">Choose</button>
-        </div>
-
-        <label>Output folder</label>
-        <div class="row">
-          <input id="outputFolder" readonly placeholder="Choose where SHARP should write .ply" />
-          <button id="chooseOutputFolder">Folder</button>
-        </div>
-
-        <div class="grid two">
-          <div>
-            <label>EXR input color</label>
-            <select id="sourceColorSpace">
-              <option value="acescg">ACEScg / AP1 linear</option>
-              <option value="srgb-linear">Linear sRGB / Rec.709</option>
-              <option value="display-srgb">Display sRGB</option>
-              <option value="srgb-encoded">Encoded sRGB values</option>
-            </select>
+    <main class="workbench">
+      <section class="leftRail">
+        <article class="panel inputCard">
+          <div class="sectionHead">
+            <div>
+              <p class="eyebrow">Step 1</p>
+              <h2>Input image</h2>
+            </div>
+            <span id="inputInfo" class="metaText">No image loaded</span>
           </div>
-          <div>
-            <label>EXR tone map</label>
-            <select id="toneMap">
-              <option value="filmic">Filmic/ACES-ish</option>
-              <option value="reinhard">Reinhard</option>
-              <option value="clip">Clip</option>
-            </select>
-          </div>
-        </div>
 
-        <div class="grid two">
-          <div>
-            <label>EXR exposure: <span id="exposureValue">0.0</span> stops</label>
-            <input id="exposureStops" type="range" min="-5" max="5" value="0" step="0.1" />
+          <div class="previewShell inputPreviewShell">
+            <img id="inputPreview" class="hidden" alt="Input preview" />
+            <span id="inputPlaceholder" class="placeholder">Choose EXR, PNG, JPG, or JPEG</span>
           </div>
-          <div>
-            <label>SHARP device</label>
-            <select id="device">
-              <option value="default">Auto</option>
-              <option value="cuda">CUDA</option>
-              <option value="cpu">CPU</option>
-            </select>
-          </div>
-        </div>
 
-        <div class="buttonGrid">
-          <button id="installButton" class="ghost">Install/check runtime</button>
-          <button id="runButton" class="primary">Run SHARP</button>
-          <button id="cancelButton" class="danger" disabled>Cancel</button>
-        </div>
-
-        <details class="experimental">
-          <summary>Experimental Pixal3D GLB provider</summary>
-          <div class="notice warning">
-            Pixal3D is <strong>academic/research-only</strong>, not for commercial/production use, and not intended for EU use. It installs into a separate <code>pixal3d-experimental</code> runtime and is not bundled into the public app path.
+          <label>Input frame</label>
+          <div class="row pathRow">
+            <input id="inputPath" readonly placeholder="No input selected" />
+            <button id="chooseInput">Choose</button>
           </div>
-          <label class="checkRow"><input id="pixalAccept" type="checkbox" /> I accept the Pixal3D license limits for this local experiment.</label>
-          <div class="buttonGrid">
-            <button id="pixalCheckButton" class="ghost">Check Pixal3D</button>
-            <button id="pixalInstallButton" class="ghost">Install Pixal3D</button>
-            <button id="pixalRunButton" class="primary">Run Pixal3D → GLB</button>
-          </div>
-          <p id="pixalStatus" class="status subtle">Disabled until license box is checked.</p>
-        </details>
 
-        <p id="status" class="status">Choose an input frame to start.</p>
-        <p id="updateStatus" class="status subtle">Updates are available in installed builds.</p>
-        <div class="progressShell" aria-label="Job progress">
-          <div id="progressBar" class="progressBar"></div>
-        </div>
-        <p id="progressDetails" class="status subtle">Idle.</p>
-        <div id="resultActions" class="row hidden">
-          <button id="viewPly" class="primary">View .ply</button>
-          <button id="showPly" class="ghost">Show output</button>
-          <button id="openFolder" class="ghost">Open folder</button>
-        </div>
-      </section>
-
-      <section class="rightColumn">
-        <article class="viewport panel">
-          <div class="viewportHeader">
-            <h2>Input / inference preview</h2>
-            <span id="inputInfo"></span>
-          </div>
-          <div class="previewShell">
-            <img id="inputPreview" alt="Input preview" />
-            <span id="inputPlaceholder" class="placeholder">No frame loaded</span>
+          <label>Output folder</label>
+          <div class="row pathRow">
+            <input id="outputFolder" readonly placeholder="Where outputs will be written" />
+            <button id="chooseOutputFolder">Folder</button>
           </div>
         </article>
 
-        <article class="viewer panel">
-          <div class="viewportHeader">
-            <h2>PLY preview</h2>
-            <span id="viewerInfo">Run SHARP, then view the .ply</span>
+        <details class="panel advancedPanel">
+          <summary>
+            <span>EXR / runtime options</span>
+            <small>Usually leave these alone</small>
+          </summary>
+          <div class="grid two">
+            <div>
+              <label>EXR input color</label>
+              <select id="sourceColorSpace">
+                <option value="acescg">ACEScg / AP1 linear</option>
+                <option value="srgb-linear">Linear sRGB / Rec.709</option>
+                <option value="display-srgb">Display sRGB</option>
+                <option value="srgb-encoded">Encoded sRGB values</option>
+              </select>
+            </div>
+            <div>
+              <label>EXR tone map</label>
+              <select id="toneMap">
+                <option value="filmic">Filmic/ACES-ish</option>
+                <option value="reinhard">Reinhard</option>
+                <option value="clip">Clip</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid two">
+            <div>
+              <label>EXR exposure: <span id="exposureValue">0.0</span> stops</label>
+              <input id="exposureStops" type="range" min="-5" max="5" value="0" step="0.1" />
+            </div>
+            <div>
+              <label>SHARP device</label>
+              <select id="device">
+                <option value="default">Auto</option>
+                <option value="cuda">CUDA</option>
+                <option value="cpu">CPU</option>
+              </select>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="centerStage">
+        <article class="panel heroPanel">
+          <div class="sectionHead">
+            <div>
+              <p class="eyebrow">Step 2</p>
+              <h2>Choose output lane</h2>
+            </div>
+            <span class="metaText">SHARP is the stable default</span>
+          </div>
+
+          <div class="providerGrid">
+            <section class="providerCard selected">
+              <div class="providerTop">
+                <span class="providerBadge">Primary</span>
+                <strong>SHARP .PLY</strong>
+              </div>
+              <p>Apple SHARP single-frame Gaussian splat output. Best supported path in this app.</p>
+              <div class="buttonGrid mainActions">
+                <button id="installButton" class="ghost">Install/check runtime</button>
+                <button id="runButton" class="primary">Run SHARP</button>
+              </div>
+            </section>
+
+            <section class="providerCard experimentalCard">
+              <div class="providerTop">
+                <span class="providerBadge warningBadge">Experimental</span>
+                <strong>Pixal3D .GLB</strong>
+              </div>
+              <p>Research-only GLB mesh/material backend. Isolated runtime, license-gated, and fragile.</p>
+              <details class="pixalDetails">
+                <summary>Enable Pixal3D controls</summary>
+                <div class="notice warning">
+                  Pixal3D is <strong>academic/research-only</strong>, not for commercial/production use, and not intended for EU use. It installs into a separate <code>pixal3d-experimental</code> runtime.
+                </div>
+                <label class="checkRow"><input id="pixalAccept" type="checkbox" /> I accept the Pixal3D license limits for this local experiment.</label>
+                <div class="buttonGrid pixalActions">
+                  <button id="pixalCheckButton" class="ghost">Check</button>
+                  <button id="pixalInstallButton" class="ghost">Install</button>
+                  <button id="pixalRunButton" class="primary">Run GLB</button>
+                </div>
+                <p id="pixalStatus" class="status subtle">Disabled until license box is checked.</p>
+              </details>
+            </section>
+          </div>
+
+          <div class="statusStrip">
+            <div class="statusTextBlock">
+              <p id="status" class="status">Choose an input frame to start.</p>
+              <p id="progressDetails" class="status subtle">Idle.</p>
+            </div>
+            <button id="cancelButton" class="danger" disabled>Cancel</button>
+          </div>
+          <div class="progressShell" aria-label="Job progress">
+            <div id="progressBar" class="progressBar"></div>
+          </div>
+          <p id="updateStatus" class="status subtle compactStatus">Updates are available in installed builds.</p>
+        </article>
+
+        <article class="panel resultPanel">
+          <div class="sectionHead">
+            <div>
+              <p class="eyebrow">Step 3</p>
+              <h2>Output asset</h2>
+            </div>
+            <span id="viewerInfo" class="metaText">Run SHARP, then view the .ply</span>
           </div>
           <div class="viewerShell">
             <canvas id="plyCanvas" width="900" height="420"></canvas>
-            <span id="viewerPlaceholder" class="placeholder">No PLY loaded</span>
+            <span id="viewerPlaceholder" class="placeholder">Run SHARP to preview a .PLY here<br />Pixal3D .GLB opens in your output folder</span>
             <div class="viewerHelp">Drag rotate • Wheel zoom • Double-click reset</div>
           </div>
-        </article>
-
-        <article class="panel logPanel">
-          <div class="viewportHeader">
-            <h2>Runtime log</h2>
-            <div class="logActions">
-              <span id="runtimeInfo">Not checked</span>
-              <button id="copyLogButton" class="ghost small">Copy log</button>
-            </div>
+          <div id="resultActions" class="resultActions hidden">
+            <button id="viewPly" class="primary">View .PLY</button>
+            <button id="showPly" class="ghost">Show output</button>
+            <button id="openFolder" class="ghost">Open folder</button>
           </div>
-          <pre id="log"></pre>
         </article>
       </section>
+
+      <aside class="rightRail">
+        <article class="panel quickPanel">
+          <p class="eyebrow">Working notes</p>
+          <h2>What matters while it runs</h2>
+          <ul>
+            <li>One obvious Run button for the stable path.</li>
+            <li>Downloads show size, speed, and file count when available.</li>
+            <li>Pixal3D stays visible, but not equal-weight with SHARP.</li>
+          </ul>
+        </article>
+
+        <details class="panel logPanel">
+          <summary>
+            <span>Runtime log</span>
+            <small>Open only when debugging</small>
+          </summary>
+          <div class="logActions">
+            <button id="copyLogButton" class="ghost small">Copy log</button>
+          </div>
+          <pre id="log"></pre>
+        </details>
+      </aside>
     </main>
 
     <script src="renderer.js"></script>
