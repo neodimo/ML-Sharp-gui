@@ -215,6 +215,10 @@ li + li { margin-top: 0.35rem; }
 .compactStatus { margin: 0.45rem 1rem 0; }
 .progressShell { height: 10px; overflow: hidden; border-radius: 999px; background: rgba(255, 238, 211, 0.08); border: 1px solid rgba(255, 238, 211, 0.08); margin: 0.7rem 1rem 0; }
 .progressBar { height: 100%; width: 0%; border-radius: inherit; background: linear-gradient(90deg, #d56f1c, var(--orange), var(--orange-2)); transition: width 220ms ease; }
+.liveLogPanel { margin: 0.72rem 1rem 0; border: 1px solid rgba(255, 238, 211, 0.10); border-radius: 16px; overflow: hidden; background: rgba(0, 0, 0, 0.25); }
+.liveLogHead { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; padding: 0.48rem 0.66rem; color: #ffe0b6; font-size: 0.76rem; font-weight: 850; border-bottom: 1px solid rgba(255, 238, 211, 0.08); }
+.liveLogHead small { color: var(--muted); font-weight: 650; }
+#liveLog { height: 118px; margin: 0; padding: 0.62rem 0.72rem; overflow: hidden; color: #eadfcd; font-family: "Cascadia Mono", "Consolas", ui-monospace, SFMono-Regular, monospace; font-size: 0.72rem; line-height: 1.34; white-space: pre-wrap; }
 .progressBar.indeterminate { width: 45%; animation: indeterminate 1.2s ease-in-out infinite; }
 @keyframes indeterminate { 0% { transform: translateX(-110%); } 100% { transform: translateX(245%); } }
 

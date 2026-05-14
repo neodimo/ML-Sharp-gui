@@ -148,7 +148,7 @@ function pixal3dPythonPath() {
 }
 
 function pixal3dInstallMarkerPath() {
-  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v12.json' : 'install-linux-cuda-v1.json';
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v13.json' : 'install-linux-cuda-v1.json';
   return path.join(pixal3dRoot(), markerName);
 }
 
@@ -183,6 +183,7 @@ function pixal3dExecutionEnv(extra = {}) {
     SPARSE_ATTN_BACKEND: process.platform === 'win32' ? 'sdpa' : (extra.SPARSE_ATTN_BACKEND || process.env.SPARSE_ATTN_BACKEND || 'flash_attn'),
     HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
     PYTHONUNBUFFERED: '1',
+    PIXAL3D_LOW_VRAM: process.platform === 'win32' ? (extra.PIXAL3D_LOW_VRAM || process.env.PIXAL3D_LOW_VRAM || '1') : (extra.PIXAL3D_LOW_VRAM || process.env.PIXAL3D_LOW_VRAM || ''),
     PIXAL3D_REMBG_MODEL: process.platform === 'win32' ? (extra.PIXAL3D_REMBG_MODEL || process.env.PIXAL3D_REMBG_MODEL || 'briaai/RMBG-1.4') : (extra.PIXAL3D_REMBG_MODEL || process.env.PIXAL3D_REMBG_MODEL || ''),
   };
 }
@@ -205,6 +206,17 @@ function patchPixal3DWindowsSource(repo) {
     'os.environ["ATTN_BACKEND"] = "flash_attn_3"',
     'os.environ["ATTN_BACKEND"] = os.environ.get("ATTN_BACKEND", "sdpa")\nos.environ["SPARSE_ATTN_BACKEND"] = os.environ.get("SPARSE_ATTN_BACKEND", os.environ["ATTN_BACKEND"])'
   );
+  if (!inference.includes('PIXAL3D_LOW_VRAM')) {
+    inference = inference.replace(
+      '    pipeline.low_vram = False\n    pipeline.cuda()\n\n    pipeline.image_cond_model_ss.cuda()\n    pipeline.image_cond_model_shape_512.cuda()\n    pipeline.image_cond_model_shape_1024.cuda()\n    pipeline.image_cond_model_tex_1024.cuda()',
+      '    pipeline.low_vram = os.environ.get("PIXAL3D_LOW_VRAM", "1") != "0"\n    if pipeline.low_vram:\n        print("[VRAM] Windows low-VRAM mode enabled; moving models on/off GPU by stage", flush=True)\n        pipeline.to(torch.device("cuda"))\n    else:\n        pipeline.cuda()\n        pipeline.image_cond_model_ss.cuda()\n        pipeline.image_cond_model_shape_512.cuda()\n        pipeline.image_cond_model_shape_1024.cuda()\n        pipeline.image_cond_model_tex_1024.cuda()'
+    );
+    inference = inference.replace(
+      '    os.remove(tmp_path)\n    print(f"  camera_angle_x={camera_params[\'camera_angle_x\']:.4f}, distance={camera_params[\'distance\']:.4f}")',
+      '    os.remove(tmp_path)\n    del moge_model\n    if torch.cuda.is_available():\n        torch.cuda.empty_cache()\n    print(f"  camera_angle_x={camera_params[\'camera_angle_x\']:.4f}, distance={camera_params[\'distance\']:.4f}")'
+    );
+    if (!inference.includes('PIXAL3D_LOW_VRAM') || !inference.includes('del moge_model')) throw new Error('Pixal3D low-VRAM inference patch marker changed upstream.');
+  }
   fs.writeFileSync(inferencePath, inference);
 
   let rembg = fs.readFileSync(rembgPath, 'utf8').replace(/\r\n/g, '\n');
@@ -232,6 +244,12 @@ function patchPixal3DWindowsSource(repo) {
   }
 
   let imageCond = fs.readFileSync(imageCondPath, 'utf8').replace(/\r\n/g, '\n');
+  if (!imageCond.includes('Windows low-VRAM cat guard')) {
+    const oldCat = '                # Concatenate lr and hr: [B, grid_res³, D*2]\n                z_proj = torch.cat([z_proj_lr, z_proj_hr], dim=-1)';
+    const newCat = '                # Concatenate lr and hr: [B, grid_res³, D*2]\n                # Windows low-VRAM cat guard: projected 64³ DINO features are\n                # huge on 8GB laptop GPUs. Cast to fp16 before concatenating to\n                # avoid a transient fp32 allocation spike.\n                z_proj_lr = z_proj_lr.to(torch.float16)\n                z_proj_hr = z_proj_hr.to(torch.float16)\n                if torch.cuda.is_available():\n                    torch.cuda.empty_cache()\n                z_proj = torch.cat([z_proj_lr, z_proj_hr], dim=-1)';
+    if (!imageCond.includes(oldCat)) throw new Error('Pixal3D NAF concat marker changed upstream.');
+    imageCond = imageCond.replace(oldCat, newCat);
+  }
   if (!imageCond.includes('Windows interpolation fallback')) {
     const newLoadNaf = `    def _load_naf(self):
         """Lazy-load a Windows-safe NAF replacement.
@@ -265,8 +283,8 @@ function patchPixal3DWindowsSource(repo) {
     const loadNafMatch = imageCond.match(/    def _load_naf\(self\):\n[\s\S]*?(?=\n    def to\(self, device\):)/);
     if (!loadNafMatch) throw new Error('Pixal3D NAF loader marker changed upstream.');
     imageCond = imageCond.replace(loadNafMatch[0], newLoadNaf);
-    fs.writeFileSync(imageCondPath, imageCond);
   }
+  fs.writeFileSync(imageCondPath, imageCond);
 
 
   let sparseConfig = fs.readFileSync(sparseConfigPath, 'utf8').replace(/\r\n/g, '\n');

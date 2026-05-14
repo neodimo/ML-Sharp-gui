@@ -49,6 +49,7 @@ const el = {
   inputPlaceholder: $('inputPlaceholder'),
   inputInfo: $('inputInfo'),
   log: $('log'),
+  liveLog: $('liveLog'),
   copyLogButton: $('copyLogButton'),
   runtimeInfo: $('runtimeInfo'),
   docsButton: $('docsButton'),
@@ -74,12 +75,15 @@ function setStatus(message, kind = '') {
 
 let pendingLogText = '';
 let logFlushScheduled = false;
+const liveLogLines = [];
 
 function setLiveLogLine(text) {
   const clean = String(text || '').replace(/\s+/g, ' ').trim();
   if (!clean) return;
-  const clipped = clean.length > 170 ? `${clean.slice(0, 167)}…` : clean;
-  if (el.progressDetails) el.progressDetails.textContent = `Latest: ${clipped}`;
+  const clipped = clean.length > 180 ? `${clean.slice(0, 177)}…` : clean;
+  liveLogLines.push(clipped);
+  while (liveLogLines.length > 8) liveLogLines.shift();
+  if (el.liveLog) el.liveLog.textContent = liveLogLines.join('\n');
 }
 
 function flushLog() {
