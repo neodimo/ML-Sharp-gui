@@ -72,13 +72,33 @@ function setStatus(message, kind = '') {
   el.status.textContent = message;
 }
 
+let pendingLogText = '';
+let logFlushScheduled = false;
+
+function setLiveLogLine(text) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return;
+  const clipped = clean.length > 170 ? `${clean.slice(0, 167)}…` : clean;
+  if (el.progressDetails) el.progressDetails.textContent = `Latest: ${clipped}`;
+}
+
+function flushLog() {
+  logFlushScheduled = false;
+  if (!pendingLogText) return;
+  el.log.insertAdjacentText('beforeend', pendingLogText);
+  pendingLogText = '';
+  el.log.scrollTop = el.log.scrollHeight;
+}
+
 function appendLog(line) {
   const text = String(line || '');
   if (!text) return;
-  el.log.textContent += `${text}\n`;
-  requestAnimationFrame(() => {
-    el.log.scrollTop = el.log.scrollHeight;
-  });
+  setLiveLogLine(text);
+  pendingLogText += `${text}\n`;
+  if (!logFlushScheduled) {
+    logFlushScheduled = true;
+    setTimeout(flushLog, 16);
+  }
 }
 
 function appendError(label, err) {
@@ -91,6 +111,7 @@ function appendError(label, err) {
 }
 
 async function copyLog() {
+  flushLog();
   const text = el.log.textContent || '';
   if (!text.trim()) {
     setStatus('Runtime log is empty.', 'busy');

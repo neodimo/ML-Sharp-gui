@@ -148,7 +148,7 @@ function pixal3dPythonPath() {
 }
 
 function pixal3dInstallMarkerPath() {
-  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v11.json' : 'install-linux-cuda-v1.json';
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v12.json' : 'install-linux-cuda-v1.json';
   return path.join(pixal3dRoot(), markerName);
 }
 
@@ -194,8 +194,9 @@ function patchPixal3DWindowsSource(repo) {
   const sparseConfigPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'config.py');
   const sparseAttentionPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'attention', 'full_attn.py');
   const rembgPath = path.join(repo, 'pixal3d', 'pipelines', 'rembg', 'BiRefNet.py');
+  const pipelinePath = path.join(repo, 'pixal3d', 'pipelines', 'pixal3d_image_to_3d.py');
   const imageCondPath = path.join(repo, 'pixal3d', 'trainers', 'flow_matching', 'mixins', 'image_conditioned_proj.py');
-  if (!fs.existsSync(inferencePath) || !fs.existsSync(sparseConfigPath) || !fs.existsSync(sparseAttentionPath) || !fs.existsSync(rembgPath) || !fs.existsSync(imageCondPath)) {
+  if (!fs.existsSync(inferencePath) || !fs.existsSync(sparseConfigPath) || !fs.existsSync(sparseAttentionPath) || !fs.existsSync(rembgPath) || !fs.existsSync(pipelinePath) || !fs.existsSync(imageCondPath)) {
     throw new Error('Pixal3D files were not found for Windows SDPA patching.');
   }
 
@@ -220,6 +221,15 @@ function patchPixal3DWindowsSource(repo) {
     rembg = rembg.replace(oldRembgCall, newRembgCall);
   }
   fs.writeFileSync(rembgPath, rembg);
+
+  let pipeline = fs.readFileSync(pipelinePath, 'utf8').replace(/\r\n/g, '\n');
+  if (!pipeline.includes('Windows RMBG empty mask fallback')) {
+    const oldBbox = '        alpha = output_np[:, :, 3]\n        bbox = np.argwhere(alpha > 0.8 * 255)\n        bbox = np.min(bbox[:, 1]), np.min(bbox[:, 0]), np.max(bbox[:, 1]), np.max(bbox[:, 0])';
+    const newBbox = '        alpha = output_np[:, :, 3]\n        bbox = np.argwhere(alpha > 0.8 * 255)\n        if bbox.size == 0:\n            # Windows RMBG empty mask fallback: the public fallback model can\n            # return a very low-confidence/empty mask for some inputs. Keep\n            # Pixal3D moving by treating the full image as foreground.\n            print("[RMBG] Empty foreground mask; using full image crop fallback", flush=True)\n            output = output.convert("RGBA")\n            output.putalpha(255)\n            output_np = np.array(output)\n            alpha = output_np[:, :, 3]\n            bbox = np.argwhere(alpha > 0)\n        bbox = np.min(bbox[:, 1]), np.min(bbox[:, 0]), np.max(bbox[:, 1]), np.max(bbox[:, 0])';
+    if (!pipeline.includes(oldBbox)) throw new Error('Pixal3D preprocess bbox marker changed upstream.');
+    pipeline = pipeline.replace(oldBbox, newBbox);
+    fs.writeFileSync(pipelinePath, pipeline);
+  }
 
   let imageCond = fs.readFileSync(imageCondPath, 'utf8').replace(/\r\n/g, '\n');
   if (!imageCond.includes('Windows interpolation fallback')) {
