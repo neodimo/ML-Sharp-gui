@@ -24,13 +24,14 @@ The app installer does not include Pixal3D, its weights, or its dependencies. Th
 
 Known risk points:
 
-- dynamic Hugging Face model downloads
+- dynamic Hugging Face / torch hub model downloads
 - direct GitHub wheel URLs
 - Linux/CUDA-specific wheels in `requirements-hfdemo.txt`
 - Windows uses community CUDA wheels from `visualbruno/ComfyUI-Trellis2`, pinned to a specific commit and SHA-256 hashes
 - Windows skips NATTEN because Pixal3D does not import it directly and official NATTEN `0.21.0` wheels are Linux-only
 - Windows patches Pixal3D sparse attention to use PyTorch SDPA instead of `flash_attn`/`xformers`; this should be slower but avoids WSL2-only wheels
 - Pixal3D's Hugging Face config currently asks for gated `briaai/RMBG-2.0`; the Windows experiment overrides the background-removal model to public `briaai/RMBG-1.4` by default. Set `PIXAL3D_REMBG_MODEL` before launching the app if you need a different compatible model.
+- Pixal3D preloads NAF via `torch.hub` from `valeoai/NAF`; Windows installs `einops` explicitly because that torch hub repo imports it but Pixal3D's own requirements do not list it.
 - very new upstream repo, no release/security policy yet
 - no Gradio `share=True` path is used by this integration
 

@@ -148,7 +148,7 @@ function pixal3dPythonPath() {
 }
 
 function pixal3dInstallMarkerPath() {
-  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v4.json' : 'install-linux-cuda-v1.json';
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v5.json' : 'install-linux-cuda-v1.json';
   return path.join(pixal3dRoot(), markerName);
 }
 
@@ -171,6 +171,7 @@ const PIXAL3D_WINDOWS_INFERENCE_DEPS = [
   'timm==1.0.22',
   'imageio==2.37.2',
   'imageio-ffmpeg==0.6.0',
+  'einops==0.8.1',
 ];
 
 function pixal3dExecutionEnv(extra = {}) {
@@ -517,7 +518,7 @@ async function installPixal3D(request = {}) {
   await runProcess(uv, ['pip', 'install', '--python', py, 'https://github.com/LDYang694/Storages/releases/download/20260430/utils3d-0.0.2-py3-none-any.whl'], { cwd: repo, env });
   if (process.platform === 'win32') {
     sendLog('Verifying Pixal3D import surface before marking install ready.');
-    await runProcess(py, ['-c', 'import transformers, timm, kornia, imageio; from pixal3d.pipelines import Pixal3DImageTo3DPipeline; print("Pixal3D import check OK")'], {
+    await runProcess(py, ['-c', 'import transformers, timm, kornia, imageio, einops; from pixal3d.pipelines import Pixal3DImageTo3DPipeline; print("Pixal3D import check OK")'], {
       cwd: repo,
       env: pixal3dExecutionEnv(env),
     });
