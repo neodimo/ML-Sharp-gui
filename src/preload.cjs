@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('sharpSplat', {
   showInFolder: (filePath) => ipcRenderer.invoke('show-in-folder', filePath),
   openPath: (filePath) => ipcRenderer.invoke('open-path', filePath),
   loadPlyPreview: (filePath) => ipcRenderer.invoke('load-ply-preview', filePath),
+  loadGlbPreview: (filePath) => ipcRenderer.invoke('load-glb-preview', filePath),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   restartAndInstallUpdate: () => ipcRenderer.invoke('restart-and-install-update'),

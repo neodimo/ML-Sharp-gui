@@ -9,6 +9,7 @@ const state = {
   outputPly: '',
   outputFile: '',
   busy: false,
+  activeMode: 'sharp',
   progressMode: 'idle',
   downloads: { active: false, startedAt: 0, totalBytes: 0, doneBytes: 0, files: new Map(), doneFiles: 0 },
   longPhase: { active: false, label: '', startedAt: 0 },
@@ -35,7 +36,15 @@ const el = {
   exposureStops: $('exposureStops'),
   exposureValue: $('exposureValue'),
   device: $('device'),
-  installButton: $('installButton'),
+  sharpAdvancedPanel: $('sharpAdvancedPanel'),
+  sharpModeButton: $('sharpModeButton'),
+  pixalModeButton: $('pixalModeButton'),
+  sharpModePanel: $('sharpModePanel'),
+  pixalModePanel: $('pixalModePanel'),
+  modeSummary: $('modeSummary'),
+  resultPanel: $('resultPanel'),
+  viewerTitle: $('viewerTitle'),
+  glbCanvas: $('glbCanvas'),
   runButton: $('runButton'),
   cancelButton: $('cancelButton'),
   status: $('status'),
@@ -52,12 +61,7 @@ const el = {
   liveLog: $('liveLog'),
   copyLogButton: $('copyLogButton'),
   runtimeInfo: $('runtimeInfo'),
-  docsButton: $('docsButton'),
-  runtimeButton: $('runtimeButton'),
-  pixalDocsButton: $('pixalDocsButton'),
   pixalAccept: $('pixalAccept'),
-  pixalCheckButton: $('pixalCheckButton'),
-  pixalInstallButton: $('pixalInstallButton'),
   pixalRunButton: $('pixalRunButton'),
   pixalStatus: $('pixalStatus'),
   updateButton: $('updateButton'),
@@ -65,8 +69,12 @@ const el = {
   updateStatus: $('updateStatus'),
   plyCanvas: $('plyCanvas'),
   viewerPlaceholder: $('viewerPlaceholder'),
+  viewerHelp: $('viewerHelp'),
   viewerInfo: $('viewerInfo'),
 };
+
+let babylonEngine = null;
+let babylonScene = null;
 
 function setStatus(message, kind = '') {
   el.status.className = `status ${kind}`.trim();
@@ -277,9 +285,32 @@ function setBusy(busy) {
   else if (state.progressMode === 'busy') setProgress('idle');
   el.chooseInput.disabled = busy;
   el.chooseOutputFolder.disabled = busy;
-  el.installButton.disabled = busy;
   el.runButton.disabled = busy;
+  el.pixalRunButton.disabled = busy;
   el.cancelButton.disabled = !busy;
+}
+
+function setMode(mode) {
+  state.activeMode = mode;
+  const isSharp = mode === 'sharp';
+  el.sharpModeButton.classList.toggle('active', isSharp);
+  el.pixalModeButton.classList.toggle('active', !isSharp);
+  el.sharpModePanel.classList.toggle('hidden', !isSharp);
+  el.pixalModePanel.classList.toggle('hidden', isSharp);
+  el.sharpAdvancedPanel.classList.toggle('hidden', !isSharp);
+  el.modeSummary.textContent = isSharp ? 'SHARP .PLY selected' : 'Pixal3D .GLB selected';
+  setStatus(isSharp ? 'SHARP will output a Gaussian splat .PLY.' : 'Pixal3D will output an experimental textured .GLB.', 'busy');
+}
+
+function showOutputPanel(kind) {
+  el.resultPanel.classList.remove('hidden');
+  const isGlb = kind === 'glb';
+  el.plyCanvas.classList.toggle('hidden', isGlb);
+  el.glbCanvas.classList.toggle('hidden', !isGlb);
+  el.viewerHelp.classList.toggle('hidden', false);
+  el.viewerPlaceholder.classList.add('hidden');
+  el.viewerTitle.textContent = isGlb ? 'Pixal3D GLB preview' : 'SHARP PLY preview';
+  el.viewPly.classList.toggle('hidden', isGlb);
 }
 
 function readOptions() {
@@ -425,6 +456,7 @@ async function runSharp() {
     state.outputPly = result.outputPly;
     state.outputFile = result.outputPly;
     el.resultActions.classList.remove('hidden');
+    showOutputPanel('ply');
     const size = result.sizeBytes ? ` • ${humanBytes(result.sizeBytes)}` : '';
     const converted = result.converted ? ' Converted EXR to inference PNG first.' : '';
     setStatus(`Done: ${result.outputPly}${size}.${converted}`, 'good');
@@ -495,10 +527,11 @@ async function runPixal3D() {
     const result = await sharpSplat.runPixal3D(readOptions());
     state.outputFile = result.outputGlb;
     el.resultActions.classList.remove('hidden');
+    showOutputPanel('glb');
     const size = result.sizeBytes ? ` • ${humanBytes(result.sizeBytes)}` : '';
     setStatus(`Pixal3D GLB done: ${result.outputGlb}${size}.`, 'good');
-    el.viewerInfo.textContent = 'GLB generated. Use Show output/open folder to inspect it in a GLB viewer.';
     setProgress('done');
+    await loadGlbViewer(result.outputGlb);
   } catch (err) {
     appendError('Pixal3D failed', err);
     setStatus('Pixal3D failed — see Runtime log.', 'bad');
@@ -554,18 +587,14 @@ sharpSplat.onUpdateState((update) => {
 
 el.chooseInput.addEventListener('click', chooseInput);
 el.chooseOutputFolder.addEventListener('click', chooseOutputFolder);
-el.installButton.addEventListener('click', installRuntime);
+el.sharpModeButton.addEventListener('click', () => setMode('sharp'));
+el.pixalModeButton.addEventListener('click', () => setMode('pixal'));
 el.runButton.addEventListener('click', runSharp);
 el.cancelButton.addEventListener('click', cancelJob);
-el.runtimeButton.addEventListener('click', () => checkRuntime(true));
 el.copyLogButton.addEventListener('click', copyLog);
-el.pixalCheckButton.addEventListener('click', () => checkPixal3D(true));
-el.pixalInstallButton.addEventListener('click', installPixal3D);
 el.pixalRunButton.addEventListener('click', runPixal3D);
 el.updateButton.addEventListener('click', checkForUpdates);
 el.restartUpdateButton.addEventListener('click', restartAndInstallUpdate);
-el.docsButton.addEventListener('click', () => sharpSplat.openExternal('https://github.com/apple/ml-sharp'));
-el.pixalDocsButton.addEventListener('click', () => sharpSplat.openExternal('https://github.com/TencentARC/Pixal3D'));
 el.sourceColorSpace.addEventListener('change', refreshInputPreview);
 el.toneMap.addEventListener('change', refreshInputPreview);
 el.exposureStops.addEventListener('input', () => {
@@ -648,8 +677,58 @@ function drawPlyViewer() {
   }
 }
 
+async function loadGlbViewer(filePath) {
+  if (!filePath || !el.glbCanvas || !window.BABYLON) return;
+  showOutputPanel('glb');
+  el.viewerInfo.textContent = 'Loading GLB preview…';
+  try {
+    if (babylonEngine) {
+      babylonEngine.dispose();
+      babylonEngine = null;
+      babylonScene = null;
+    }
+    const dataUrl = await sharpSplat.loadGlbPreview(filePath);
+    babylonEngine = new BABYLON.Engine(el.glbCanvas, true, { preserveDrawingBuffer: true, stencil: true });
+    babylonScene = new BABYLON.Scene(babylonEngine);
+    babylonScene.clearColor = new BABYLON.Color4(0.06, 0.065, 0.075, 1);
+    const camera = new BABYLON.ArcRotateCamera('camera', Math.PI / 2.4, Math.PI / 2.7, 2.4, BABYLON.Vector3.Zero(), babylonScene);
+    camera.attachControl(el.glbCanvas, true);
+    camera.wheelPrecision = 45;
+    new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0.3, 1, 0.4), babylonScene).intensity = 1.1;
+    const dir = new BABYLON.DirectionalLight('key', new BABYLON.Vector3(-0.6, -1, -0.8), babylonScene);
+    dir.intensity = 1.4;
+    await BABYLON.SceneLoader.AppendAsync('', dataUrl, babylonScene);
+    const meshes = babylonScene.meshes.filter((m) => m.getTotalVertices && m.getTotalVertices() > 0);
+    if (meshes.length) {
+      const min = new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+      const max = new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
+      for (const mesh of meshes) {
+        const info = mesh.getBoundingInfo();
+        BABYLON.Vector3.MinimizeToRef(min, info.boundingBox.minimumWorld, min);
+        BABYLON.Vector3.MaximizeToRef(max, info.boundingBox.maximumWorld, max);
+      }
+      const center = min.add(max).scale(0.5);
+      const radius = Math.max(0.8, max.subtract(min).length() * 0.75);
+      camera.setTarget(center);
+      camera.radius = radius * 1.7;
+    }
+    babylonEngine.runRenderLoop(() => babylonScene && babylonScene.render());
+    el.viewerInfo.textContent = 'GLB preview loaded · drag rotate · wheel zoom';
+    window.addEventListener('resize', () => babylonEngine && babylonEngine.resize());
+  } catch (err) {
+    el.viewerInfo.textContent = `GLB preview failed: ${err.message || err}`;
+    appendError('GLB preview failed', err);
+  }
+}
+
 async function loadPlyViewer(filePath = state.outputPly) {
   if (!filePath) return;
+  showOutputPanel('ply');
+  if (babylonEngine) {
+    babylonEngine.dispose();
+    babylonEngine = null;
+    babylonScene = null;
+  }
   el.viewerInfo.textContent = 'Loading PLY…';
   try {
     const ply = await sharpSplat.loadPlyPreview(filePath);
@@ -694,7 +773,7 @@ window.addEventListener('resize', drawPlyViewer);
 
 
 el.inputPreview.classList.add('hidden');
+setMode('sharp');
 setProgress('idle');
 checkRuntime(false);
-checkPixal3D(false);
 drawPlyViewer();

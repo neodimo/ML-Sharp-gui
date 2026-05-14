@@ -913,6 +913,12 @@ ipcMain.handle('open-path', async (_event, filePath) => {
 
 ipcMain.handle('load-ply-preview', async (_event, filePath) => loadPlyPreview(filePath));
 
+ipcMain.handle('load-glb-preview', async (_event, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) throw new Error('GLB file does not exist.');
+  const data = fs.readFileSync(filePath);
+  return `data:model/gltf-binary;base64,${data.toString('base64')}`;
+});
+
 ipcMain.handle('open-external', async (_event, url) => {
   if (typeof url === 'string' && /^https?:\/\//.test(url)) {
     await shell.openExternal(url);
