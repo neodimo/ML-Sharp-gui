@@ -148,7 +148,7 @@ function pixal3dPythonPath() {
 }
 
 function pixal3dInstallMarkerPath() {
-  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v6.json' : 'install-linux-cuda-v1.json';
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v7.json' : 'install-linux-cuda-v1.json';
   return path.join(pixal3dRoot(), markerName);
 }
 
@@ -244,6 +244,11 @@ function patchPixal3DWindowsSource(repo) {
                     return
                 old_import = """try:\n    NATTEN_RECENT = False\n    from natten.functional import na2d_av, na2d_qk\nexcept:\n    NATTEN_RECENT = True\n    from natten import na2d\n"""
                 new_import = """try:\n    NATTEN_RECENT = False\n    NATTEN_AVAILABLE = True\n    from natten.functional import na2d_av, na2d_qk\nexcept Exception:\n    try:\n        NATTEN_RECENT = True\n        NATTEN_AVAILABLE = True\n        from natten import na2d\n    except Exception:\n        NATTEN_RECENT = False\n        NATTEN_AVAILABLE = False\n\n# WINDOWS_TORCH_LOCAL_ATTENTION_FALLBACK\ndef torch_local_attention(q, k, v, kernel_size, dilation, scale=1, return_weights=False):\n    kh, kw = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)\n    dh, dw = dilation if isinstance(dilation, tuple) else (dilation, dilation)\n    b, h, w, n, d = q.shape\n    q2 = rearrange(q, \"b h w n d -> (b n) d h w\")\n    k2 = rearrange(k, \"b h w n d -> (b n) d h w\")\n    v2 = rearrange(v, \"b h w n d -> (b n) d h w\")\n    pad = ((kw // 2) * dw, (kh // 2) * dh)\n    k_unf = F.unfold(k2, kernel_size=(kh, kw), dilation=(dh, dw), padding=pad)\n    v_unf = F.unfold(v2, kernel_size=(kh, kw), dilation=(dh, dw), padding=pad)\n    k_unf = k_unf.view(b * n, d, kh * kw, h * w)\n    v_unf = v_unf.view(b * n, d, kh * kw, h * w)\n    q_flat = q2.flatten(2)\n    scores = torch.einsum(\"bdp,bdkp->bkp\", q_flat, k_unf) * scale\n    weights = scores.softmax(dim=1)\n    out = torch.einsum(\"bkp,bdkp->bdp\", weights, v_unf).view(b * n, d, h, w)\n    out = rearrange(out, \"(b n) d h w -> b h w n d\", b=b, n=n)\n    if return_weights:\n        return out, scores\n    return out\n"""
+                hubconf_path = Path(repo_dir) / "hubconf.py"
+                if hubconf_path.exists():
+                    hubconf = hubconf_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+                    hubconf = hubconf.replace('dependencies = ["torch", "natten"]', 'dependencies = ["torch"]')
+                    hubconf_path.write_text(hubconf, encoding="utf-8")
                 if old_import not in text:
                     return
                 text = text.replace(old_import, new_import)

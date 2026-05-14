@@ -32,7 +32,7 @@ Known risk points:
 - Windows patches Pixal3D sparse attention to use PyTorch SDPA instead of `flash_attn`/`xformers`; this should be slower but avoids WSL2-only wheels
 - Pixal3D's Hugging Face config currently asks for gated `briaai/RMBG-2.0`; the Windows experiment overrides the background-removal model to public `briaai/RMBG-1.4` by default. Set `PIXAL3D_REMBG_MODEL` before launching the app if you need a different compatible model.
 - Pixal3D preloads NAF via `torch.hub` from `valeoai/NAF`; Windows installs `einops` explicitly because that torch hub repo imports it but Pixal3D's own requirements do not list it.
-- NAF imports NATTEN for neighborhood attention; because official NATTEN wheels are Linux-only here, Windows patches the cached NAF torch-hub source to use a pure PyTorch local-attention fallback. This is expected to be slower.
+- NAF imports NATTEN for neighborhood attention; because official NATTEN wheels are Linux-only here, Windows patches the cached NAF torch-hub source and dependency declaration to use a pure PyTorch local-attention fallback. This is expected to be slower.
 - very new upstream repo, no release/security policy yet
 - no Gradio `share=True` path is used by this integration
 
