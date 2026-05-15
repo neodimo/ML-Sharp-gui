@@ -47,8 +47,8 @@ li + li { margin-top: 0.35rem; }
 .headerActions { display: flex; justify-content: flex-end; align-items: center; gap: 0.48rem; }
 .pill { border: 1px solid rgba(238, 126, 48, 0.30); background: var(--accent-soft); color: #ffc394; border-radius: 999px; padding: 0.42rem 0.64rem; font-size: 0.78rem; font-weight: 800; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.workbench { height: calc(100vh - 78px); min-height: 0; overflow: hidden; display: grid; grid-template-columns: minmax(300px, 360px) minmax(500px, 1fr) minmax(220px, 280px); gap: 0.9rem; padding: 0.9rem 1.25rem 1.15rem; }
-.leftRail, .centerStage, .rightRail { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 0.9rem; }
+.workbench { height: calc(100vh - 78px); min-height: 0; overflow: hidden; display: grid; grid-template-columns: minmax(300px, 360px) minmax(560px, 1fr); gap: 0.9rem; padding: 0.9rem 1.25rem 1.15rem; }
+.leftRail, .centerStage { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 0.9rem; }
 .centerStage { display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .panel { border: 1px solid var(--line); border-radius: 22px; background: var(--panel); box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22); }
 .sectionHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 0.95rem 1rem 0.8rem; }
@@ -67,8 +67,8 @@ li + li { margin-top: 0.35rem; }
 .placeholder { position: absolute; color: #858079; font-weight: 750; pointer-events: none; text-align: center; padding: 1rem; }
 
 .advancedPanel { padding: 0.78rem; }
-.advancedPanel summary, .logPanel summary { cursor: pointer; color: #f1e8dc; font-weight: 850; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
-.advancedPanel summary small, .logPanel summary small { color: var(--muted); font-weight: 650; font-size: 0.72rem; }
+.advancedPanel summary { cursor: pointer; color: #f1e8dc; font-weight: 850; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.advancedPanel summary small { color: var(--muted); font-weight: 650; font-size: 0.72rem; }
 .advancedPanel[open] { overflow: auto; }
 .advancedPanel[open] summary { margin-bottom: 0.8rem; }
 
@@ -108,17 +108,11 @@ li + li { margin-top: 0.35rem; }
 .viewerHelp { position: absolute; left: 0.78rem; bottom: 0.72rem; color: rgba(238, 236, 230, 0.70); font-size: 0.74rem; background: rgba(0, 0, 0, 0.45); padding: 0.32rem 0.5rem; border-radius: 999px; pointer-events: none; }
 .resultActions { display: flex; gap: 0.55rem; padding: 0.78rem 1rem; justify-content: flex-end; }
 
-.rightRail .panel { flex: 0 0 auto; }
-.logPanel { min-height: 260px; display: flex; flex-direction: column; overflow: hidden; padding: 0.85rem; }
-.logPanel[open] { flex: 1 1 360px; }
-.logPanel summary { flex: 0 0 auto; }
-#log { flex: 1 1 auto; min-height: 180px; max-height: 100%; margin: 0.72rem 0 0; padding: 0.85rem; overflow-y: scroll; overflow-x: auto; color: #e6ded3; background: #111214; border: 1px solid var(--line-soft); border-radius: 14px; font-family: "Cascadia Mono", "Consolas", ui-monospace, SFMono-Regular, monospace; font-size: 0.76rem; line-height: 1.4; white-space: pre-wrap; }
-
 @media (max-width: 1120px) {
   html, body { overflow: auto; }
   .appHeader { height: auto; align-items: flex-start; flex-direction: column; }
   .workbench { height: auto; overflow: visible; grid-template-columns: 1fr; }
-  .leftRail, .centerStage, .rightRail { overflow: visible; }
+  .leftRail, .centerStage { overflow: visible; }
   .centerStage { display: flex; flex-direction: column; }
   .resultPanel { height: 520px; }
 }
