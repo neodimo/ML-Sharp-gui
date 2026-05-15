@@ -143,9 +143,45 @@ function sharpExePath() {
   return path.join(runtimeRoot(), 'venv', 'bin', 'sharp');
 }
 
+function runtimePythonEnv(extra = {}) {
+  const venvDir = path.join(runtimeRoot(), 'venv');
+  const binDir = process.platform === 'win32' ? path.join(venvDir, 'Scripts') : path.join(venvDir, 'bin');
+  return {
+    UV_PYTHON_INSTALL_DIR: path.join(runtimeRoot(), 'uv-python'),
+    UV_CACHE_DIR: path.join(runtimeRoot(), 'uv-cache'),
+    UV_LINK_MODE: 'copy',
+    PIP_DISABLE_PIP_VERSION_CHECK: '1',
+    VIRTUAL_ENV: venvDir,
+    PATH: binDir + path.delimiter + (process.env.PATH || ''),
+    ...extra,
+  };
+}
+
+function parsePyvenvConfig(venvDir = path.join(runtimeRoot(), 'venv')) {
+  const cfg = path.join(venvDir, 'pyvenv.cfg');
+  if (!fs.existsSync(cfg)) return {};
+  const values = {};
+  for (const line of fs.readFileSync(cfg, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^([^=]+?)\s*=\s*(.+)$/);
+    if (match) values[match[1].trim().toLowerCase()] = match[2].trim();
+  }
+  return values;
+}
+
+function resolvedVenvPythonPath(venvDir = path.join(runtimeRoot(), 'venv')) {
+  const shim = venvPythonPath();
+  const cfg = parsePyvenvConfig(venvDir);
+  const candidates = [];
+  if (cfg.executable) candidates.push(cfg.executable);
+  if (cfg['base-executable']) candidates.push(cfg['base-executable']);
+  if (cfg.home) candidates.push(path.join(cfg.home, process.platform === 'win32' ? 'python.exe' : 'python'));
+  candidates.push(shim);
+  return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || shim;
+}
+
 function sharpCommand() {
   return {
-    command: venvPythonPath(),
+    command: resolvedVenvPythonPath(),
     argsPrefix: ['-c', 'from sharp.cli import main_cli; main_cli()'],
   };
 }
@@ -432,10 +468,11 @@ async function checkRuntimeStatus() {
     uv,
     uvExists: uv === 'uv' || uv === 'uv.exe' ? false : fs.existsSync(uv),
     python: py,
+    resolvedPython: resolvedVenvPythonPath(),
     pythonExists: fs.existsSync(py),
     sharp: sharp,
     sharpExists: fs.existsSync(sharp),
-    ready: fs.existsSync(py) && fs.existsSync(sharp),
+    ready: fs.existsSync(resolvedVenvPythonPath()) && fs.existsSync(sharp),
   };
 }
 
@@ -450,15 +487,10 @@ async function installRuntime() {
 
   const uv = uvPath();
   const venvDir = path.join(runtimeRoot(), 'venv');
-  const env = {
-    UV_PYTHON_INSTALL_DIR: path.join(runtimeRoot(), 'uv-python'),
-    UV_CACHE_DIR: path.join(runtimeRoot(), 'uv-cache'),
-    UV_LINK_MODE: 'copy',
-    PIP_DISABLE_PIP_VERSION_CHECK: '1',
-  };
+  const env = runtimePythonEnv();
 
   const py = venvPythonPath();
-  if (fs.existsSync(py)) {
+  if (fs.existsSync(py) && fs.existsSync(resolvedVenvPythonPath())) {
     sendLog(`Reusing existing Python virtual environment: ${venvDir}`);
   } else {
     const venvArgs = ['venv', venvDir, '--python', '3.13', '--python-preference', 'managed'];
@@ -618,14 +650,10 @@ async function installPanorama360() {
 
   const py = venvPythonPath();
   const uv = uvPath();
-  const env = {
-    UV_CACHE_DIR: path.join(runtimeRoot(), 'uv-cache'),
-    UV_LINK_MODE: 'copy',
-    PIP_DISABLE_PIP_VERSION_CHECK: '1',
-  };
+  const env = runtimePythonEnv();
   sendLog('Installing 360 backend Python extras into the existing SHARP runtime.');
   await runProcess(uv, ['pip', 'install', '--python', py, 'pillow', 'numpy', 'scipy', 'opencv-python', 'pillow-heif'], { cwd: repo, env });
-  await runProcess(py, ['-c', 'import PIL, numpy, scipy; import insp_to_splat; print("SHARP 360 import check OK")'], { cwd: repo });
+  await runProcess(resolvedVenvPythonPath(), ['-c', 'import PIL, numpy, scipy; import insp_to_splat; print("SHARP 360 import check OK")'], { cwd: repo, env });
 
   fs.writeFileSync(marker, JSON.stringify({
     installedAt: new Date().toISOString(),
@@ -766,7 +794,7 @@ async function runPanorama360(request = {}) {
   sendJobState({ busy: true, label: 'Running 360 panorama SHARP' });
   sendLog('Running 360 panorama pipeline: ' + sideCount + ' views, ' + requestedAlignment + ' alignment, ' + (request.device || 'default') + ' device.');
   if ((request.device || 'default') === 'cpu') sendLog('CPU mode is supported as a fallback but will be slow.');
-  await runProcess(venvPythonPath(), args, { cwd: panorama360RepoPath() });
+  await runProcess(resolvedVenvPythonPath(), args, { cwd: panorama360RepoPath(), env: runtimePythonEnv() });
 
   const newest = fs.existsSync(outputPly) ? { filePath: outputPly, size: fs.statSync(outputPly).size } : findNewestPly(request.outputFolder);
   if (!newest) throw new Error('360 panorama pipeline finished but no .ply was found in the output folder.');
@@ -1198,7 +1226,7 @@ ipcMain.handle('run-sharp', async (_event, request) => {
     const sharp = sharpCommand();
     const args = [...sharp.argsPrefix, 'predict', '-i', prepared.inferencePath, '-o', request.outputFolder, '--device', request.device || 'default'];
     if (request.verbose) args.push('-v');
-    await runProcess(sharp.command, args, { cwd: mlSharpSourcePath() });
+    await runProcess(sharp.command, args, { cwd: mlSharpSourcePath(), env: runtimePythonEnv() });
     const newest = findNewestPly(request.outputFolder);
     if (!newest) throw new Error('SHARP finished but no .ply was found in the output folder.');
     sendLog(`PLY written: ${newest.filePath}`);

@@ -371,6 +371,12 @@ async function refreshInputPreview() {
   try {
     const info = await sharpSplat.inspectInput(state.inputPath, readOptions());
     el.inputPreview.src = info.previewDataUrl;
+    const previewShell = el.inputPreview.closest('.inputPreviewShell');
+    if (previewShell) {
+      const aspect = Math.max(0.1, Math.min(8, info.width / Math.max(1, info.height)));
+      previewShell.style.setProperty('--preview-aspect', String(aspect));
+      previewShell.style.setProperty('--preview-max-width', `${Math.round(Math.min(1600, Math.max(360, 520 * aspect)))}px`);
+    }
     el.inputPreview.classList.remove('hidden');
     el.inputPlaceholder.classList.add('hidden');
     state.inputIsPanorama = !!info.isPanorama;
