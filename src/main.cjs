@@ -91,18 +91,31 @@ function legacyRuntimeRoot() {
   return path.join(appRoot(), 'sharp-runtime');
 }
 
+function previousProductUserDataRoot() {
+  return path.join(app.getPath('appData'), 'ML-Sharp GUI');
+}
+
+function migrateDirIfNeeded(source, target, label) {
+  if (source === target || fs.existsSync(target) || !fs.existsSync(source)) return;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  try {
+    fs.renameSync(source, target);
+    sendLog(`Migrated ${label} to 2D to 3D user-data location: ${target}`);
+  } catch (err) {
+    sendLog(`Could not move legacy ${label} automatically: ${err.message || err}`);
+    sendLog(`If needed, copy ${source} to ${target}`);
+  }
+}
+
 function migrateLegacyRuntimeIfNeeded() {
   const current = runtimeRoot();
   const legacy = legacyRuntimeRoot();
-  if (current === legacy || fs.existsSync(current) || !fs.existsSync(legacy)) return;
-  fs.mkdirSync(path.dirname(current), { recursive: true });
-  try {
-    fs.renameSync(legacy, current);
-    sendLog(`Migrated sharp-runtime to stable update-safe location: ${current}`);
-  } catch (err) {
-    sendLog(`Could not move legacy sharp-runtime automatically: ${err.message || err}`);
-    sendLog(`If needed, copy ${legacy} to ${current}`);
-  }
+  const previous = previousProductUserDataRoot();
+  migrateDirIfNeeded(path.join(previous, 'sharp-runtime'), current, 'sharp-runtime');
+  migrateDirIfNeeded(path.join(previous, 'pixal3d-experimental'), pixal3dRoot(), 'Pixal3D backend');
+  migrateDirIfNeeded(path.join(previous, 'sharp-360-backend'), panorama360Root(), '360 backend');
+  migrateDirIfNeeded(path.join(previous, 'infinidepth-experimental'), infinidepthRoot(), 'InfiniDepth backend');
+  migrateDirIfNeeded(legacy, current, 'sharp-runtime');
 }
 
 function mlSharpSourcePath() {
