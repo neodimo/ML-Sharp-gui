@@ -1246,3 +1246,23 @@ ipcMain.handle('copy-text', async (_event, text) => {
   clipboard.writeText(String(text || ''));
   return true;
 });
+
+ipcMain.handle('get-last-output-folder', async () => {
+  try {
+    const data = fs.readFileSync(path.join(app.getPath('userData'), 'last-output-folder.json'), 'utf8');
+    const parsed = JSON.parse(data);
+    return parsed.path || '';
+  } catch {
+    return '';
+  }
+});
+
+ipcMain.handle('set-last-output-folder', async (_event, folderPath) => {
+  try {
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.writeFileSync(path.join(app.getPath('userData'), 'last-output-folder.json'), JSON.stringify({ path: folderPath }));
+    return true;
+  } catch {
+    return false;
+  }
+});

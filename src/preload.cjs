@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('sharpSplat', {
   restartAndInstallUpdate: () => ipcRenderer.invoke('restart-and-install-update'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
+  getLastOutputFolder: () => ipcRenderer.invoke('get-last-output-folder'),
+  setLastOutputFolder: (path) => ipcRenderer.invoke('set-last-output-folder', path),
   onLog: (handler) => {
     const listener = (_event, line) => handler(line);
     ipcRenderer.on('job-log', listener);

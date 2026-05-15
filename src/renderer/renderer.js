@@ -21,6 +21,8 @@ const state = {
     rotX: -0.28,
     rotY: 0.45,
     zoom: 1,
+    panX: 0,
+    panY: 0,
     dragging: false,
     lastX: 0,
     lastY: 0,
@@ -74,7 +76,13 @@ const el = {
   panoramaStatus: $('panoramaStatus'),
   updateButton: $('updateButton'),
   restartUpdateButton: $('restartUpdateButton'),
-  updateStatus: $('updateStatus'),
+  updateProgressBlock: $('updateProgressBlock'),
+  updateProgressBar: $('updateProgressBar'),
+  updateProgressLabel: $('updateProgressLabel'),
+  updateProgressBlock: $(updateProgressBlock),
+  updateProgressBar: $(updateProgressBar),
+  updateProgressLabel: $(updateProgressLabel),
+  updateStatus: $(updateStatus),
   plyCanvas: $('plyCanvas'),
   viewerPlaceholder: $('viewerPlaceholder'),
   viewerHelp: $('viewerHelp'),
@@ -404,6 +412,17 @@ async function chooseOutputFolder() {
   if (!selected) return;
   state.outputFolder = selected;
   el.outputFolder.value = selected;
+  sharpSplat.setLastOutputFolder(selected);
+}
+
+async function restoreOutputFolder() {
+  try {
+    const saved = await sharpSplat.getLastOutputFolder();
+    if (saved && saved.length > 1) {
+      state.outputFolder = saved;
+      el.outputFolder.value = saved;
+    }
+  } catch { /* ignore */ }
 }
 
 async function checkRuntime(showGood = true) {
@@ -672,19 +691,34 @@ sharpSplat.onUpdateState((update) => {
   el.updateStatus.textContent = update.message || update.status || '';
   appendLog(`[update] ${update.message || update.status}`);
   el.updateButton.disabled = update.status === 'checking' || update.status === 'downloading';
+
+  // Show download progress bar in header
+  if (update.status === 'downloading' && update.progress && update.progress.percent !== undefined) {
+    el.updateProgressBlock.classList.remove('hidden');
+    el.updateProgressBar.style.width = `${Math.max(0, Math.min(100, update.progress.percent))}%`;
+    el.updateProgressLabel.textContent = `${Math.round(update.progress.percent)}%`;
+  } else if (update.status === 'downloaded') {
+    el.updateProgressBlock.classList.add('hidden');
+  }
+
   if (update.status === 'available') {
     el.updateStatus.textContent = `${update.message} Downloading now…`;
     sharpSplat.downloadUpdate().catch((err) => {
       appendError('Update download failed', err);
       el.updateStatus.textContent = 'Update download failed — see Runtime log.';
       el.updateButton.disabled = false;
+      el.updateProgressBlock.classList.add('hidden');
     });
   }
   if (update.status === 'downloaded') {
     el.restartUpdateButton.classList.remove('hidden');
     el.updateButton.disabled = false;
+    el.updateStatus.textContent = 'Update ready. Restart to apply.';
   }
-  if (update.status === 'none' || update.status === 'error') el.updateButton.disabled = false;
+  if (update.status === 'none' || update.status === 'error') {
+    el.updateButton.disabled = false;
+    el.updateProgressBlock.classList.add('hidden');
+  }
 });
 
 el.chooseInput.addEventListener('click', chooseInput);
@@ -731,6 +765,8 @@ function resetViewerCamera() {
   state.viewer.rotX = -0.28;
   state.viewer.rotY = 0.45;
   state.viewer.zoom = 1;
+  state.viewer.panX = 0;
+  state.viewer.panY = 0;
   drawPlyViewer();
 }
 
@@ -744,7 +780,7 @@ function drawPlyViewer() {
   ctx.fillStyle = '#080b12';
   ctx.fillRect(0, 0, width, height);
 
-  const { positions, colors, bounds, rotX, rotY, zoom } = state.viewer;
+  const { positions, colors, bounds, rotX, rotY, zoom, panX, panY } = state.viewer;
   if (!positions.length || !bounds) return;
 
   const cx = (bounds.minX + bounds.maxX) * 0.5;
@@ -765,8 +801,8 @@ function drawPlyViewer() {
     const y2 = y * cosX - z1 * sinX;
     const z2 = y * sinX + z1 * cosX;
     pts.push({
-      x: width * 0.5 + x1 * scale,
-      y: height * 0.5 - y2 * scale,
+      x: width * 0.5 + x1 * scale + panX,
+      y: height * 0.5 - y2 * scale + panY,
       z: z2,
       r: colors[i],
       g: colors[i + 1],
@@ -813,13 +849,28 @@ async function loadGlbViewer(filePath) {
         BABYLON.Vector3.MaximizeToRef(max, info.boundingBox.maximumWorld, max);
       }
       const center = min.add(max).scale(0.5);
-      const radius = Math.max(0.8, max.subtract(min).length() * 0.75);
+      const extent = max.subtract(min);
+      const radius = Math.max(0.8, extent.length() * 0.55);
       camera.setTarget(center);
+
+      camera.lowerRadiusLimit = radius * 0.1;
+      camera.upperRadiusLimit = radius * 10;
       camera.radius = radius * 1.7;
     }
     babylonEngine.runRenderLoop(() => babylonScene && babylonScene.render());
-    el.viewerInfo.textContent = 'GLB preview loaded · drag rotate · wheel zoom';
-    window.addEventListener('resize', () => babylonEngine && babylonEngine.resize());
+    el.glbCanvas.addEventListener('dblclick', () => {
+      if (meshes.length) {
+        const glbMin = meshes.reduce((m, n) => BABYLON.Vector3.Minimize(m, n.getBoundingInfo().boundingBox.minimumWorld), new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY));
+        const glbMax = meshes.reduce((m, n) => BABYLON.Vector3.Maximize(m, n.getBoundingInfo().boundingBox.maximumWorld), new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY));
+        camera.setTarget(glbMin.add(glbMax).scale(0.5));
+        const ext = glbMax.subtract(glbMin);
+        camera.radius = Math.max(0.8, ext.length() * 0.55) * 1.7;
+      }
+    });
+    el.viewerInfo.textContent = 'GLB preview loaded · drag rotate · wheel zoom · double-click reset';
+    if (window._glbResizeHandler) window.removeEventListener('resize', window._glbResizeHandler);
+    window._glbResizeHandler = () => babylonEngine && babylonEngine.resize();
+    window.addEventListener('resize', window._glbResizeHandler);
   } catch (err) {
     el.viewerInfo.textContent = `GLB preview failed: ${err.message || err}`;
     appendError('GLB preview failed', err);
@@ -876,9 +927,28 @@ el.plyCanvas.addEventListener('wheel', (event) => {
 el.plyCanvas.addEventListener('dblclick', resetViewerCamera);
 window.addEventListener('resize', drawPlyViewer);
 
+window.addEventListener('keydown', (event) => {
+  if (!el.plyCanvas || el.plyCanvas.classList.contains('hidden')) return;
+  const PAN = 28;
+  const ZOOM = 0.12;
+  switch (event.key) {
+    case 'w': case 'W': state.viewer.panY -= PAN; break;
+    case 's': case 'S': state.viewer.panY += PAN; break;
+    case 'a': case 'A': state.viewer.panX -= PAN; break;
+    case 'd': case 'D': state.viewer.panX += PAN; break;
+    case 'ArrowUp': state.viewer.zoom *= 1 + ZOOM; break;
+    case 'ArrowDown': state.viewer.zoom *= 1 - ZOOM; break;
+    default: return;
+  }
+  event.preventDefault();
+  state.viewer.zoom = Math.max(0.08, Math.min(80, state.viewer.zoom));
+  drawPlyViewer();
+});
+
 
 el.inputPreview.classList.add('hidden');
 setMode('sharp');
 setProgress('idle');
+restoreOutputFolder();
 checkRuntime(false);
 drawPlyViewer();
