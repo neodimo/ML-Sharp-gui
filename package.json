@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "smoke": "node scripts/smoke-test.cjs",
-    "pack:win-folder": "electron-packager . SharpSplatSHARP --platform=win32 --arch=x64 --out=dist --overwrite --asar --prune=true --extra-resource=vendor/ml-sharp --extra-resource=vendor/uv --ignore='^/dist($|/)' --ignore='^/runtime($|/)' --ignore='^/sharp-runtime($|/)' --ignore='^/test-output($|/)' --ignore='^/vendor/ml-sharp($|/)' --ignore='^/vendor/uv($|/)'",
+    "pack:win-folder": "electron-packager . SharpSplatSHARP --platform=win32 --arch=x64 --out=dist --overwrite --asar --prune=true --extra-resource=vendor/ml-sharp --extra-resource=vendor/uv --extra-resource=scripts/infinidepth_360_bridge.py --ignore='^/dist($|/)' --ignore='^/runtime($|/)' --ignore='^/sharp-runtime($|/)' --ignore='^/test-output($|/)' --ignore='^/vendor/ml-sharp($|/)' --ignore='^/vendor/uv($|/)'",
     "dist:win": "electron-builder --win nsis --x64 --publish never",
     "dist:win:publish": "electron-builder --win nsis --x64 --publish always"
   },
@@ -35,6 +35,7 @@
     },
     "files": [
       "src/**/*",
+      "scripts/infinidepth_360_bridge.py",
       "package.json",
       "LICENSE",
       "NOTICE",
@@ -48,6 +49,10 @@
       {
         "from": "vendor/uv",
         "to": "uv"
+      },
+      {
+        "from": "scripts/infinidepth_360_bridge.py",
+        "to": "scripts/infinidepth_360_bridge.py"
       }
     ],
     "win": {

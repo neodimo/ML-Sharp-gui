@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('sharpSplat', {
   checkPanorama360: () => ipcRenderer.invoke('check-panorama360'),
   installPanorama360: () => ipcRenderer.invoke('install-panorama360'),
   runPanorama360: (request) => ipcRenderer.invoke('run-panorama360', request),
+  checkInfiniDepth: () => ipcRenderer.invoke('check-infinidepth'),
+  installInfiniDepth: () => ipcRenderer.invoke('install-infinidepth'),
   checkPixal3D: () => ipcRenderer.invoke('check-pixal3d'),
   installPixal3D: (request) => ipcRenderer.invoke('install-pixal3d', request),
   runPixal3D: (request) => ipcRenderer.invoke('run-pixal3d', request),

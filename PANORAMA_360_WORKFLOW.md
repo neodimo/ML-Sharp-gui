@@ -20,7 +20,7 @@ The app should stay mode-driven:
 - Input is a stitched 2:1 equirectangular panorama, not raw camera files such as Insta360 .insp.
 - Recommended starting point is 4 extracted perspective views. The OP notes that more views rarely improve detail and can introduce alignment problems.
 - Default alignment should be overlap-based. DA360 is useful as a fallback when overlap alignment fails.
-- Infinidepth may be a stronger future depth prior than DA360, but needs a tiled 360-specific path because feeding a full equirectangular image directly can fail.
+- InfiniDepth may be a stronger depth prior than DA360, but needs a tiled 360-specific path because feeding a full equirectangular image directly can fail.
 - Optional SeedVR2 upscaling and motion deblur are useful, but should stay advanced toggles because they add setup/runtime weight.
 - CPU-only torch setup is valuable as a beginner/last-case path when no Nvidia GPU is available.
 - Expected baseline processing can be about a minute without upscaling, but heavy options will be much slower.
@@ -47,6 +47,7 @@ Suggested advanced controls:
 
 - Cut top/bottom poles.
 - Face overlap percentage.
+- InfiniDepth tiled depth reference.
 - DA360 depth alignment fallback.
 - Motion deblur strength.
 - SeedVR2 face upscaling.
@@ -64,7 +65,15 @@ Do not blindly vendor the reference GUI. The useful part is the pipeline shape:
 5. Merge to one 360 Gaussian splat.
 6. Export PLY first, then optional compressed formats.
 
-The first implementation should probably be a separate isolated panorama runtime path, similar to the Pixal3D isolation, until the exact Python dependencies and license posture are audited.
+The first implementation keeps the panorama runtime isolated, similar to the Pixal3D isolation. InfiniDepth is also isolated because it has its own CUDA-heavy Python stack and checkpoints.
+
+InfiniDepth path:
+
+1. Split the stitched panorama into two horizontal tiles.
+2. Run InfiniDepth on each tile.
+3. Stitch the tile depth outputs back into one panorama-wide inverse-depth reference.
+4. Feed that external reference into the SHARP_360 alignment path instead of running DA360.
+5. Keep overlap alignment as the default lightweight path.
 
 ## Open questions
 

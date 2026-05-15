@@ -562,6 +562,16 @@ async function runPanorama360() {
   }
 }
 
+function updatePanoramaStatusHint() {
+  if (el.panoramaAlignmentMode.value === 'infinidepth') {
+    el.panoramaStatus.textContent = 'InfiniDepth uses a separate optional backend and checkpoints; first run may be large.';
+  } else if (el.panoramaAlignmentMode.value === 'da360') {
+    el.panoramaStatus.textContent = 'DA360 requires its checkpoint in the 360 backend.';
+  } else {
+    el.panoramaStatus.textContent = 'Overlap alignment is the default lightweight path.';
+  }
+}
+
 async function checkPixal3D(showGood = true) {
   try {
     const status = await sharpSplat.checkPixal3D();
@@ -684,6 +694,7 @@ el.panoramaModeButton.addEventListener('click', () => setMode('panorama'));
 el.pixalModeButton.addEventListener('click', () => setMode('pixal'));
 el.runButton.addEventListener('click', runSharp);
 el.panoramaRunButton.addEventListener('click', runPanorama360);
+el.panoramaAlignmentMode.addEventListener('change', updatePanoramaStatusHint);
 el.cancelButton.addEventListener('click', cancelJob);
 el.copyLogButton.addEventListener('click', copyLog);
 el.pixalRunButton.addEventListener('click', runPixal3D);

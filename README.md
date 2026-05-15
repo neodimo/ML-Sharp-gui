@@ -13,6 +13,7 @@ This is not an Apple product, is not affiliated with Apple, and is not endorsed 
 - Runs Apple SHARP via `sharp predict -i <input> -o <folder>`
 - Detects stitched 2:1 PNG/JPEG panoramas and reveals a 360 SHARP mode
 - 360 mode clones the SHARP_360_to_Splat backend on first use, extracts perspective views, runs SHARP per view, aligns them, and writes a merged `.ply`
+- 360 mode can optionally use tiled InfiniDepth as an external depth reference instead of DA360
 - Streams the runtime log into its own scrollable pane
 - Shows a coarse progress bar for install/conversion/inference activity
 - Opens/shows the output `.ply`
@@ -52,7 +53,7 @@ Apple SHARP source is bundled under the app's `resources/ml-sharp` folder. The P
 ## Notes
 
 - SHARP can run prediction on CPU, CUDA, or MPS, but Windows will usually be CPU or CUDA.
-- 360 panorama mode defaults to 4 views and overlap alignment. CPU is available as a slow fallback.
+- 360 panorama mode defaults to 4 views and overlap alignment. InfiniDepth and DA360 are optional depth-reference paths; CPU is available as a slow fallback.
 - Rendering preview trajectories from Apple SHARP requires CUDA; this wrapper only runs prediction/export for now.
 - The built-in `.ply` viewer is a lightweight point-cloud preview, not a full Gaussian splat renderer yet.
 - The output `.ply` is Apple SHARP's own 3DGS PLY, not the fallback textured-card approximation.

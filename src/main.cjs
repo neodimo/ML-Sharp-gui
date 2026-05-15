@@ -142,6 +142,27 @@ function panorama360InstallMarkerPath() {
   return path.join(panorama360Root(), 'install-v1.json');
 }
 
+function infinidepthRoot() {
+  return path.join(app.getPath('userData'), 'infinidepth-experimental');
+}
+
+function infinidepthRepoPath() {
+  return path.join(infinidepthRoot(), 'InfiniDepth');
+}
+
+function infinidepthVenvPath() {
+  return path.join(infinidepthRoot(), 'venv');
+}
+
+function infinidepthPythonPath() {
+  if (process.platform === 'win32') return path.join(infinidepthVenvPath(), 'Scripts', 'python.exe');
+  return path.join(infinidepthVenvPath(), 'bin', 'python');
+}
+
+function infinidepthInstallMarkerPath() {
+  return path.join(infinidepthRoot(), 'install-v1.json');
+}
+
 function pixal3dRoot() {
   return path.join(app.getPath('userData'), 'pixal3d-experimental');
 }
@@ -523,6 +544,37 @@ function checkPanorama360Status() {
   };
 }
 
+function bridgeScriptPath() {
+  if (app.isPackaged) return path.join(process.resourcesPath, 'scripts', 'infinidepth_360_bridge.py');
+  return path.join(appRoot(), 'scripts', 'infinidepth_360_bridge.py');
+}
+
+function patchPanorama360ExternalDepth(repo) {
+  const script = path.join(repo, 'insp_to_splat.py');
+  if (!fs.existsSync(script)) throw new Error('SHARP_360 insp_to_splat.py was not found.');
+  let source = fs.readFileSync(script, 'utf8').replace(/\r\n/g, '\n');
+  if (source.includes('--external-depth-panorama')) return;
+
+  source = source.replace(
+    '    parser.add_argument(\n        "--da360-checkpoint",\n        type=Path,\n        default=None,\n        help="Optional DA360 checkpoint path. Defaults to checkpoints/DA360_large.pth.",\n    )',
+    '    parser.add_argument(\n        "--da360-checkpoint",\n        type=Path,\n        default=None,\n        help="Optional DA360 checkpoint path. Defaults to checkpoints/DA360_large.pth.",\n    )\n    parser.add_argument(\n        "--external-depth-panorama",\n        type=Path,\n        default=None,\n        help="Optional external panorama disparity/depth .npy used instead of running DA360.",\n    )'
+  );
+  source = source.replace(
+    '            da360_checkpoint_path = resolve_da360_checkpoint_path(args, config) if da360_alignment_enabled else None',
+    '            external_depth_panorama_path = getattr(args, "external_depth_panorama", None)\n            da360_checkpoint_path = None if external_depth_panorama_path else (resolve_da360_checkpoint_path(args, config) if da360_alignment_enabled else None)'
+  );
+  source = source.replace(
+    '                "checkpoint": describe_path_for_cache(da360_checkpoint_path),',
+    '                "checkpoint": describe_path_for_cache(da360_checkpoint_path),\n                "external_depth_panorama": describe_path_for_cache(external_depth_panorama_path),'
+  );
+  source = source.replace(
+    '                    if da360_checkpoint_path is None:\n                        raise ValueError("DA360 alignment is enabled, but no DA360 checkpoint path was resolved.")\n                    LOGGER.info(\n                        "Running DA360 panorama depth inference using checkpoint %s "\n                        "(grid=%dx%d, detail=%.0f%%)",\n                        da360_checkpoint_path, grid_res, grid_res, detail_wt * 100,\n                    )\n                    da360_predictor = build_da360_predictor(da360_checkpoint_path, device)\n                    reference_depth_panorama = predict_da360_disparity_panorama(da360_predictor, panorama, device)\n                    reference_depth_views = {\n                        view.name: extract_perspective_scalar_view(reference_depth_panorama, image_width, image_height, focal_px, focal_y_px, view)\n                        for view in extraction_layout.views\n                    }\n                    save_cached_depth_arrays(reference_depth_panorama, reference_depth_views, depth_cache_dir)\n                    del da360_predictor\n                    if device.type == "cuda":\n                        torch.cuda.empty_cache()',
+    '                    if external_depth_panorama_path:\n                        LOGGER.info("Loading external panorama depth reference from %s", external_depth_panorama_path)\n                        reference_depth_panorama = np.load(external_depth_panorama_path).astype(np.float32)\n                        reference_depth_views = {\n                            view.name: extract_perspective_scalar_view(reference_depth_panorama, image_width, image_height, focal_px, focal_y_px, view)\n                            for view in extraction_layout.views\n                        }\n                        save_cached_depth_arrays(reference_depth_panorama, reference_depth_views, depth_cache_dir)\n                    else:\n                        if da360_checkpoint_path is None:\n                            raise ValueError("DA360 alignment is enabled, but no DA360 checkpoint path was resolved.")\n                        LOGGER.info(\n                            "Running DA360 panorama depth inference using checkpoint %s "\n                            "(grid=%dx%d, detail=%.0f%%)",\n                            da360_checkpoint_path, grid_res, grid_res, detail_wt * 100,\n                        )\n                        da360_predictor = build_da360_predictor(da360_checkpoint_path, device)\n                        reference_depth_panorama = predict_da360_disparity_panorama(da360_predictor, panorama, device)\n                        reference_depth_views = {\n                            view.name: extract_perspective_scalar_view(reference_depth_panorama, image_width, image_height, focal_px, focal_y_px, view)\n                            for view in extraction_layout.views\n                        }\n                        save_cached_depth_arrays(reference_depth_panorama, reference_depth_views, depth_cache_dir)\n                        del da360_predictor\n                        if device.type == "cuda":\n                            torch.cuda.empty_cache()'
+  );
+  fs.writeFileSync(script, source);
+  sendLog('Patched SHARP 360 backend to accept external panorama depth references.');
+}
+
 async function installPanorama360() {
   ensureDirs();
   const runtime = await checkRuntimeStatus();
@@ -542,6 +594,7 @@ async function installPanorama360() {
     await runProcess('git', ['reset', '--hard', 'FETCH_HEAD'], { cwd: repo });
     await runProcess('git', ['submodule', 'update', '--init', '--recursive'], { cwd: repo });
   }
+  patchPanorama360ExternalDepth(repo);
 
   const py = venvPythonPath();
   const uv = uvPath();
@@ -564,6 +617,92 @@ async function installPanorama360() {
   return checkPanorama360Status();
 }
 
+function checkInfiniDepthStatus() {
+  const root = infinidepthRoot();
+  const repo = infinidepthRepoPath();
+  const py = infinidepthPythonPath();
+  const depthModel = path.join(repo, 'checkpoints', 'depth', 'infinidepth.ckpt');
+  const mogeModel = path.join(repo, 'checkpoints', 'moge-2-vitl-normal', 'model.pt');
+  const marker = infinidepthInstallMarkerPath();
+  return {
+    root,
+    repo,
+    repoExists: fs.existsSync(path.join(repo, 'inference_depth.py')),
+    python: py,
+    pythonExists: fs.existsSync(py),
+    depthModel,
+    depthModelExists: fs.existsSync(depthModel),
+    mogeModel,
+    mogeModelExists: fs.existsSync(mogeModel),
+    marker,
+    markerExists: fs.existsSync(marker),
+    ready: fs.existsSync(path.join(repo, 'inference_depth.py')) && fs.existsSync(py) && fs.existsSync(depthModel) && fs.existsSync(mogeModel) && fs.existsSync(marker),
+  };
+}
+
+async function installInfiniDepth() {
+  const root = infinidepthRoot();
+  const repo = infinidepthRepoPath();
+  fs.mkdirSync(root, { recursive: true });
+  sendJobState({ busy: true, label: 'Installing InfiniDepth backend' });
+  sendLog('Installing/checking InfiniDepth experimental depth backend. This is separate from SHARP and can be large.');
+  if (!fs.existsSync(path.join(repo, '.git'))) {
+    await runProcess('git', ['clone', '--depth', '1', 'https://github.com/zju3dv/InfiniDepth.git', repo], { cwd: root });
+  } else {
+    await runProcess('git', ['fetch', '--depth', '1', 'origin', 'main'], { cwd: repo });
+    await runProcess('git', ['checkout', 'FETCH_HEAD'], { cwd: repo });
+    await runProcess('git', ['reset', '--hard', 'FETCH_HEAD'], { cwd: repo });
+  }
+
+  const uv = uvPath();
+  const py = infinidepthPythonPath();
+  const env = {
+    UV_CACHE_DIR: path.join(root, 'uv-cache'),
+    UV_LINK_MODE: 'copy',
+    PIP_DISABLE_PIP_VERSION_CHECK: '1',
+  };
+  if (!fs.existsSync(py)) {
+    await runProcess(uv, ['venv', infinidepthVenvPath(), '--python', '3.10', '--python-preference', 'managed'], { env });
+  }
+  sendLog('Installing InfiniDepth Python dependencies. PyTorch/CUDA packages are large.');
+  await runProcess(uv, ['pip', 'install', '--python', py, '--extra-index-url', 'https://download.pytorch.org/whl/cu128', 'torch', 'torchvision', 'torchaudio'], { cwd: repo, env });
+  await runProcess(uv, ['pip', 'install', '--python', py, '-r', path.join(repo, 'requirements.txt')], { cwd: repo, env });
+  const status = checkInfiniDepthStatus();
+  if (!status.depthModelExists || !status.mogeModelExists) {
+    sendLog('InfiniDepth code is installed, but checkpoints are still needed: checkpoints/depth/infinidepth.ckpt and checkpoints/moge-2-vitl-normal/model.pt.');
+    sendLog('Download links are documented in InfiniDepth INSTALL.md.');
+  }
+  fs.writeFileSync(infinidepthInstallMarkerPath(), JSON.stringify({
+    installedAt: new Date().toISOString(),
+    repo,
+    python: py,
+  }, null, 2));
+  sendJobState({ busy: false, label: 'InfiniDepth backend ready' });
+  return checkInfiniDepthStatus();
+}
+
+async function buildInfiniDepthPanoramaReference(inputPath) {
+  const status = checkInfiniDepthStatus();
+  if (!status.ready) await installInfiniDepth();
+  const ready = checkInfiniDepthStatus();
+  if (!ready.depthModelExists || !ready.mogeModelExists) {
+    throw new Error('InfiniDepth checkpoints are missing. Place infinidepth.ckpt under checkpoints/depth/ and MoGe model.pt under checkpoints/moge-2-vitl-normal/ in the InfiniDepth backend folder.');
+  }
+  if (!fs.existsSync(bridgeScriptPath())) {
+    throw new Error('InfiniDepth 360 bridge script was not packaged with the app.');
+  }
+  const output = path.join(runtimeRoot(), 'converted-inputs', sanitizeStem(inputPath) + '_infinidepth_panorama.npy');
+  await runProcess(infinidepthPythonPath(), [
+    bridgeScriptPath(),
+    '--repo', infinidepthRepoPath(),
+    '--input', inputPath,
+    '--output', output,
+    '--depth-model', ready.depthModel,
+    '--moge-model', ready.mogeModel,
+  ], { cwd: infinidepthRepoPath() });
+  return output;
+}
+
 async function runPanorama360(request = {}) {
   if (!request.inputPath || !fs.existsSync(request.inputPath)) throw new Error('Input panorama file does not exist.');
   if (!request.outputFolder) throw new Error('Choose an output folder first.');
@@ -578,7 +717,9 @@ async function runPanorama360(request = {}) {
   fs.mkdirSync(request.outputFolder, { recursive: true });
   const outputPly = path.join(request.outputFolder, sanitizeStem(request.inputPath) + '_360_merged.ply');
   const sideCount = Math.max(2, Math.min(12, Number.parseInt(request.panoramaSideCount || 4, 10) || 4));
-  const alignmentMode = request.panoramaAlignmentMode === 'da360' ? 'da360' : 'overlap';
+  const requestedAlignment = request.panoramaAlignmentMode === 'infinidepth' ? 'infinidepth' : (request.panoramaAlignmentMode === 'da360' ? 'da360' : 'overlap');
+  const externalDepthPanorama = requestedAlignment === 'infinidepth' ? await buildInfiniDepthPanoramaReference(request.inputPath) : null;
+  const alignmentMode = requestedAlignment === 'infinidepth' ? 'da360' : requestedAlignment;
   const args = [
     '-u',
     path.join(panorama360RepoPath(), 'insp_to_splat.py'),
@@ -600,9 +741,10 @@ async function runPanorama360(request = {}) {
   ];
   if (request.panoramaKeepIntermediates) args.push('--keep-intermediates');
   else args.push('--delete-temp-files');
+  if (externalDepthPanorama) args.push('--external-depth-panorama', externalDepthPanorama);
 
   sendJobState({ busy: true, label: 'Running 360 panorama SHARP' });
-  sendLog('Running 360 panorama pipeline: ' + sideCount + ' views, ' + alignmentMode + ' alignment, ' + (request.device || 'default') + ' device.');
+  sendLog('Running 360 panorama pipeline: ' + sideCount + ' views, ' + requestedAlignment + ' alignment, ' + (request.device || 'default') + ' device.');
   if ((request.device || 'default') === 'cpu') sendLog('CPU mode is supported as a fallback but will be slow.');
   await runProcess(venvPythonPath(), args, { cwd: panorama360RepoPath() });
 
@@ -969,6 +1111,15 @@ ipcMain.handle('inspect-input', async (_event, inputPath, opts) => {
 
 ipcMain.handle('check-runtime', checkRuntimeStatus);
 ipcMain.handle('check-panorama360', async () => checkPanorama360Status());
+ipcMain.handle('check-infinidepth', async () => checkInfiniDepthStatus());
+ipcMain.handle('install-infinidepth', async () => {
+  try {
+    return await installInfiniDepth();
+  } catch (err) {
+    sendJobState({ busy: false, label: 'InfiniDepth install failed' });
+    throw err;
+  }
+});
 ipcMain.handle('install-panorama360', async () => {
   try {
     return await installPanorama360();
