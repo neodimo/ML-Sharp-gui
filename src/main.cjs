@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, clipboard } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { PNG } = require('pngjs');
 const { defaultColorSpaceFor, loadImage, makePreviewPngDataUrl } = require('./lib/image-loader.cjs');
@@ -128,6 +128,192 @@ function venvPythonPath() {
 function sharpExePath() {
   if (process.platform === 'win32') return path.join(runtimeRoot(), 'venv', 'Scripts', 'sharp.exe');
   return path.join(runtimeRoot(), 'venv', 'bin', 'sharp');
+}
+
+function pixal3dRoot() {
+  return path.join(app.getPath('userData'), 'pixal3d-experimental');
+}
+
+function pixal3dRepoPath() {
+  return path.join(pixal3dRoot(), 'Pixal3D');
+}
+
+function pixal3dVenvPath() {
+  return path.join(pixal3dRoot(), 'venv');
+}
+
+function pixal3dPythonPath() {
+  if (process.platform === 'win32') return path.join(pixal3dVenvPath(), 'Scripts', 'python.exe');
+  return path.join(pixal3dVenvPath(), 'bin', 'python');
+}
+
+function pixal3dInstallMarkerPath() {
+  const markerName = process.platform === 'win32' ? 'install-windows-sdpa-v13.json' : 'install-linux-cuda-v1.json';
+  return path.join(pixal3dRoot(), markerName);
+}
+
+const PIXAL3D_WINDOWS_WHEELS_BASE = 'https://raw.githubusercontent.com/visualbruno/ComfyUI-Trellis2/86d13d9eac4a2bd4395954c7184d3aa4fa81a9d8/wheels/Windows/Torch270';
+const PIXAL3D_WINDOWS_WHEELS = [
+  ['cumesh-1.0-cp311-cp311-win_amd64.whl', 'f6ec70f31fa24ebef0026ea5d622fce4314e22e2c56979219598fdd6e4df3b28'],
+  ['flex_gemm-0.0.1-cp311-cp311-win_amd64.whl', '3a1b8ef109735cc8f19729a007abb48b9a91815f350bc10cc513f5c7e27608f2'],
+  ['nvdiffrast-0.4.0-cp311-cp311-win_amd64.whl', '6d273cc912143a306389ec7b5e0fa44efbe45ea7577f86d8f13ce6b209c56c3e'],
+  ['nvdiffrec_render-0.0.0-cp311-cp311-win_amd64.whl', 'c0e4bf4ea6622ddff0eea0ca8b9be75a48318db62a7184891bcb0f1da65d1f8c'],
+  ['o_voxel-0.0.1-cp311-cp311-win_amd64.whl', 'da17f251f05ea31c1d0ad2fa3e4b7e025463cb9a12a66fb8ddb3b28634ad1636'],
+];
+
+function pixal3dWindowsWheelRequirements() {
+  return PIXAL3D_WINDOWS_WHEELS.map(([fileName, sha256]) => `${PIXAL3D_WINDOWS_WHEELS_BASE}/${fileName}#sha256=${sha256}`);
+}
+
+const PIXAL3D_WINDOWS_INFERENCE_DEPS = [
+  'transformers==4.57.3',
+  'kornia==0.8.2',
+  'timm==1.0.22',
+  'imageio==2.37.2',
+  'imageio-ffmpeg==0.6.0',
+  'einops==0.8.1',
+];
+
+function pixal3dExecutionEnv(extra = {}) {
+  return {
+    ...extra,
+    // Windows has no official flash-attn/NATTEN path here. Use PyTorch SDPA for
+    // the experimental provider and keep SHARP's runtime untouched.
+    ATTN_BACKEND: process.platform === 'win32' ? 'sdpa' : (extra.ATTN_BACKEND || process.env.ATTN_BACKEND || 'flash_attn'),
+    SPARSE_ATTN_BACKEND: process.platform === 'win32' ? 'sdpa' : (extra.SPARSE_ATTN_BACKEND || process.env.SPARSE_ATTN_BACKEND || 'flash_attn'),
+    HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
+    PYTHONUNBUFFERED: '1',
+    PIXAL3D_LOW_VRAM: process.platform === 'win32' ? (extra.PIXAL3D_LOW_VRAM || process.env.PIXAL3D_LOW_VRAM || '1') : (extra.PIXAL3D_LOW_VRAM || process.env.PIXAL3D_LOW_VRAM || ''),
+    PIXAL3D_REMBG_MODEL: process.platform === 'win32' ? (extra.PIXAL3D_REMBG_MODEL || process.env.PIXAL3D_REMBG_MODEL || 'briaai/RMBG-1.4') : (extra.PIXAL3D_REMBG_MODEL || process.env.PIXAL3D_REMBG_MODEL || ''),
+  };
+}
+
+function patchPixal3DWindowsSource(repo) {
+  if (process.platform !== 'win32') return;
+
+  const inferencePath = path.join(repo, 'inference.py');
+  const sparseConfigPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'config.py');
+  const sparseAttentionPath = path.join(repo, 'pixal3d', 'modules', 'sparse', 'attention', 'full_attn.py');
+  const rembgPath = path.join(repo, 'pixal3d', 'pipelines', 'rembg', 'BiRefNet.py');
+  const pipelinePath = path.join(repo, 'pixal3d', 'pipelines', 'pixal3d_image_to_3d.py');
+  const imageCondPath = path.join(repo, 'pixal3d', 'trainers', 'flow_matching', 'mixins', 'image_conditioned_proj.py');
+  if (!fs.existsSync(inferencePath) || !fs.existsSync(sparseConfigPath) || !fs.existsSync(sparseAttentionPath) || !fs.existsSync(rembgPath) || !fs.existsSync(pipelinePath) || !fs.existsSync(imageCondPath)) {
+    throw new Error('Pixal3D files were not found for Windows SDPA patching.');
+  }
+
+  let inference = fs.readFileSync(inferencePath, 'utf8').replace(/\r\n/g, '\n');
+  inference = inference.replace(
+    'os.environ["ATTN_BACKEND"] = "flash_attn_3"',
+    'os.environ["ATTN_BACKEND"] = os.environ.get("ATTN_BACKEND", "sdpa")\nos.environ["SPARSE_ATTN_BACKEND"] = os.environ.get("SPARSE_ATTN_BACKEND", os.environ["ATTN_BACKEND"])'
+  );
+  if (!inference.includes('PIXAL3D_LOW_VRAM')) {
+    inference = inference.replace(
+      '    pipeline.low_vram = False\n    pipeline.cuda()\n\n    pipeline.image_cond_model_ss.cuda()\n    pipeline.image_cond_model_shape_512.cuda()\n    pipeline.image_cond_model_shape_1024.cuda()\n    pipeline.image_cond_model_tex_1024.cuda()',
+      '    pipeline.low_vram = os.environ.get("PIXAL3D_LOW_VRAM", "1") != "0"\n    if pipeline.low_vram:\n        print("[VRAM] Windows low-VRAM mode enabled; moving models on/off GPU by stage", flush=True)\n        pipeline.to(torch.device("cuda"))\n    else:\n        pipeline.cuda()\n        pipeline.image_cond_model_ss.cuda()\n        pipeline.image_cond_model_shape_512.cuda()\n        pipeline.image_cond_model_shape_1024.cuda()\n        pipeline.image_cond_model_tex_1024.cuda()'
+    );
+    inference = inference.replace(
+      '    os.remove(tmp_path)\n    print(f"  camera_angle_x={camera_params[\'camera_angle_x\']:.4f}, distance={camera_params[\'distance\']:.4f}")',
+      '    os.remove(tmp_path)\n    del moge_model\n    if torch.cuda.is_available():\n        torch.cuda.empty_cache()\n    print(f"  camera_angle_x={camera_params[\'camera_angle_x\']:.4f}, distance={camera_params[\'distance\']:.4f}")'
+    );
+    if (!inference.includes('PIXAL3D_LOW_VRAM') || !inference.includes('del moge_model')) throw new Error('Pixal3D low-VRAM inference patch marker changed upstream.');
+  }
+  fs.writeFileSync(inferencePath, inference);
+
+  let rembg = fs.readFileSync(rembgPath, 'utf8').replace(/\r\n/g, '\n');
+  if (!rembg.includes('PIXAL3D_REMBG_MODEL')) {
+    const oldRembg = '    def __init__(self, model_name: str = "ZhengPeng7/BiRefNet"):\n        self.model = AutoModelForImageSegmentation.from_pretrained(\n            model_name, trust_remote_code=True\n        )';
+    const newRembg = '    def __init__(self, model_name: str = "ZhengPeng7/BiRefNet"):\n        import os\n        requested_model_name = model_name\n        model_name = os.environ.get("PIXAL3D_REMBG_MODEL") or model_name\n        if requested_model_name != model_name:\n            print(f"[RMBG] Using {model_name} instead of {requested_model_name}", flush=True)\n        try:\n            self.model = AutoModelForImageSegmentation.from_pretrained(\n                model_name, trust_remote_code=True\n            )\n        except Exception as exc:\n            if "gated repo" in str(exc).lower() or "401 client error" in str(exc).lower():\n                raise RuntimeError(\n                    f"Pixal3D background-removal model {model_name!r} is gated on Hugging Face. "\n                    "Accept access on Hugging Face and run with a token, or set PIXAL3D_REMBG_MODEL to a public compatible model such as briaai/RMBG-1.4."\n                ) from exc\n            raise';
+    if (!rembg.includes(oldRembg)) throw new Error('Pixal3D BiRefNet loader marker changed upstream.');
+    rembg = rembg.replace(oldRembg, newRembg);
+  }
+  if (!rembg.includes('raw_preds = self.model(input_images)')) {
+    const oldRembgCall = '        with torch.no_grad():\n            preds = self.model(input_images)[-1].sigmoid().cpu()';
+    const newRembgCall = '        with torch.no_grad():\n            raw_preds = self.model(input_images)\n            while isinstance(raw_preds, (list, tuple)):\n                raw_preds = raw_preds[-1]\n            if isinstance(raw_preds, dict):\n                for key in ("logits", "preds", "prediction", "out"):\n                    if key in raw_preds:\n                        raw_preds = raw_preds[key]\n                        break\n            if hasattr(raw_preds, "logits"):\n                raw_preds = raw_preds.logits\n            if not torch.is_tensor(raw_preds):\n                raise TypeError(f"Unsupported RMBG output type: {type(raw_preds)!r}")\n            preds = raw_preds.sigmoid().cpu()\n            if preds.ndim == 4:\n                preds = preds[:, :1, :, :]\n            elif preds.ndim == 3:\n                if preds.shape[0] > 4 and preds.shape[-1] > 4:\n                    preds = preds.unsqueeze(0).mean(dim=1, keepdim=True)\n                elif preds.shape[0] <= 4:\n                    preds = preds[:1].unsqueeze(0)\n                else:\n                    preds = preds[..., :1].permute(2, 0, 1).unsqueeze(0)\n            elif preds.ndim == 2:\n                preds = preds.unsqueeze(0).unsqueeze(0)';
+    if (!rembg.includes(oldRembgCall)) throw new Error('Pixal3D BiRefNet call marker changed upstream.');
+    rembg = rembg.replace(oldRembgCall, newRembgCall);
+  }
+  fs.writeFileSync(rembgPath, rembg);
+
+  let pipeline = fs.readFileSync(pipelinePath, 'utf8').replace(/\r\n/g, '\n');
+  if (!pipeline.includes('Windows RMBG empty mask fallback')) {
+    const oldBbox = '        alpha = output_np[:, :, 3]\n        bbox = np.argwhere(alpha > 0.8 * 255)\n        bbox = np.min(bbox[:, 1]), np.min(bbox[:, 0]), np.max(bbox[:, 1]), np.max(bbox[:, 0])';
+    const newBbox = '        alpha = output_np[:, :, 3]\n        bbox = np.argwhere(alpha > 0.8 * 255)\n        if bbox.size == 0:\n            # Windows RMBG empty mask fallback: the public fallback model can\n            # return a very low-confidence/empty mask for some inputs. Keep\n            # Pixal3D moving by treating the full image as foreground.\n            print("[RMBG] Empty foreground mask; using full image crop fallback", flush=True)\n            output = output.convert("RGBA")\n            output.putalpha(255)\n            output_np = np.array(output)\n            alpha = output_np[:, :, 3]\n            bbox = np.argwhere(alpha > 0)\n        bbox = np.min(bbox[:, 1]), np.min(bbox[:, 0]), np.max(bbox[:, 1]), np.max(bbox[:, 0])';
+    if (!pipeline.includes(oldBbox)) throw new Error('Pixal3D preprocess bbox marker changed upstream.');
+    pipeline = pipeline.replace(oldBbox, newBbox);
+    fs.writeFileSync(pipelinePath, pipeline);
+  }
+
+  let imageCond = fs.readFileSync(imageCondPath, 'utf8').replace(/\r\n/g, '\n');
+  if (!imageCond.includes('Windows low-VRAM cat guard')) {
+    const oldCat = '                # Concatenate lr and hr: [B, grid_res³, D*2]\n                z_proj = torch.cat([z_proj_lr, z_proj_hr], dim=-1)';
+    const newCat = '                # Concatenate lr and hr: [B, grid_res³, D*2]\n                # Windows low-VRAM cat guard: projected 64³ DINO features are\n                # huge on 8GB laptop GPUs. Cast to fp16 before concatenating to\n                # avoid a transient fp32 allocation spike.\n                z_proj_lr = z_proj_lr.to(torch.float16)\n                z_proj_hr = z_proj_hr.to(torch.float16)\n                if torch.cuda.is_available():\n                    torch.cuda.empty_cache()\n                z_proj = torch.cat([z_proj_lr, z_proj_hr], dim=-1)';
+    if (!imageCond.includes(oldCat)) throw new Error('Pixal3D NAF concat marker changed upstream.');
+    imageCond = imageCond.replace(oldCat, newCat);
+  }
+  if (!imageCond.includes('Windows interpolation fallback')) {
+    const newLoadNaf = `    def _load_naf(self):
+        """Lazy-load a Windows-safe NAF replacement.
+
+        Upstream NAF depends on NATTEN. Official NATTEN wheels are Linux-only
+        for the versions Pixal3D wants, and torch.hub refuses to load NAF when
+        natten is absent. For the Windows experimental provider, preserve the
+        tensor contract by using deterministic interpolation for the high-res
+        feature branch. This is lower quality than true NAF, but keeps Pixal3D
+        runnable inside the Windows app without WSL2.
+        """
+        if self.naf_model is None:
+            import torch
+            import torch.nn.functional as F
+            device = next(self.model.parameters()).device
+
+            class _WindowsInterpolationNAF(torch.nn.Module):
+                def forward(self, image, lr_features, output_size):
+                    return F.interpolate(
+                        lr_features,
+                        size=output_size,
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+
+            print("[NAF] Using Windows interpolation fallback instead of NATTEN-backed NAF", flush=True)
+            self.naf_model = _WindowsInterpolationNAF().to(device)
+            self.naf_model.eval()
+            self.naf_model.requires_grad_(False)
+`;
+    const loadNafMatch = imageCond.match(/    def _load_naf\(self\):\n[\s\S]*?(?=\n    def to\(self, device\):)/);
+    if (!loadNafMatch) throw new Error('Pixal3D NAF loader marker changed upstream.');
+    imageCond = imageCond.replace(loadNafMatch[0], newLoadNaf);
+  }
+  fs.writeFileSync(imageCondPath, imageCond);
+
+
+  let sparseConfig = fs.readFileSync(sparseConfigPath, 'utf8').replace(/\r\n/g, '\n');
+  sparseConfig = sparseConfig
+    .replace("ATTN = 'flash_attn'", "ATTN = 'sdpa'")
+    .replace("['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4']", "['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4', 'sdpa']")
+    .replace("Literal['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4']", "Literal['xformers', 'flash_attn', 'flash_attn_3', 'flash_attn_4', 'sdpa']");
+  fs.writeFileSync(sparseConfigPath, sparseConfig);
+
+  let sparseAttention = fs.readFileSync(sparseAttentionPath, 'utf8').replace(/\r\n/g, '\n');
+  if (!sparseAttention.includes('Windows-native SDPA fallback')) {
+    const marker = "    if config.ATTN == 'xformers':";
+    const fallback = `    # Windows-native SDPA fallback: slower than flash-attn/xformers, but avoids\n    # Linux-only CUDA wheels and keeps the experimental provider inside the app.\n    def _sdpa_varlen(q, k, v, q_seqlen, kv_seqlen):\n        outs = []\n        q_off = 0\n        kv_off = 0\n        for n in range(len(q_seqlen)):\n            qn = q_seqlen[n]\n            kn = kv_seqlen[n]\n            q_i = q[q_off:q_off + qn].transpose(0, 1).unsqueeze(0)\n            k_i = k[kv_off:kv_off + kn].transpose(0, 1).unsqueeze(0)\n            v_i = v[kv_off:kv_off + kn].transpose(0, 1).unsqueeze(0)\n            out_i = torch.nn.functional.scaled_dot_product_attention(\n                q_i, k_i, v_i, dropout_p=0.0, is_causal=False\n            )[0]\n            outs.append(out_i.transpose(0, 1))\n            q_off += qn\n            kv_off += kn\n        return torch.cat(outs, dim=0)\n\n    if num_all_args == 1:\n        q, k, v = qkv.unbind(dim=1)\n    elif num_all_args == 2:\n        k, v = kv.unbind(dim=1)\n\n`;
+    const markerAt = sparseAttention.indexOf(marker);
+    if (markerAt < 0) throw new Error('Pixal3D sparse attention dispatch marker changed upstream.');
+    sparseAttention = `${sparseAttention.slice(0, markerAt)}${fallback}${sparseAttention.slice(markerAt)}`;
+  }
+
+  const raiseText = "    else:\n        raise ValueError(f\"Unknown attention module: {config.ATTN}\")\n";
+  const sdpaText = "    elif config.ATTN == 'sdpa':\n        out = _sdpa_varlen(q, k, v, q_seqlen, kv_seqlen)\n    else:\n        raise ValueError(f\"Unknown attention module: {config.ATTN}\")\n";
+  if (sparseAttention.includes("elif config.ATTN == 'sdpa':")) {
+    // Already patched.
+  } else if (sparseAttention.includes(raiseText)) {
+    sparseAttention = sparseAttention.replace(raiseText, sdpaText);
+  } else {
+    throw new Error('Pixal3D sparse attention fallback marker changed upstream.');
+  }
+  fs.writeFileSync(sparseAttentionPath, sparseAttention);
+  sendLog('Patched Pixal3D inference/sparse attention/NAF for Windows SDPA and public RMBG fallback.');
 }
 
 function ensureDirs() {
@@ -282,7 +468,29 @@ async function prepareInferenceInput(inputPath, opts) {
   return { inferencePath: out, converted: true, convertedPath: out };
 }
 
+function findNewestByExt(outputDir, extension) {
+  if (!fs.existsSync(outputDir)) return null;
+  const wanted = String(extension || '').toLowerCase();
+  const files = fs.readdirSync(outputDir)
+    .filter((name) => name.toLowerCase().endsWith(wanted))
+    .map((name) => {
+      const filePath = path.join(outputDir, name);
+      const stat = fs.statSync(filePath);
+      return { filePath, mtime: stat.mtimeMs, size: stat.size };
+    })
+    .sort((a, b) => b.mtime - a.mtime);
+  return files[0] || null;
+}
+
 function findNewestPly(outputDir) {
+  return findNewestByExt(outputDir, '.ply');
+}
+
+function findNewestGlb(outputDir) {
+  return findNewestByExt(outputDir, '.glb');
+}
+
+function _oldFindNewestPly(outputDir) {
   if (!fs.existsSync(outputDir)) return null;
   const files = fs.readdirSync(outputDir)
     .filter((name) => name.toLowerCase().endsWith('.ply'))
@@ -293,6 +501,141 @@ function findNewestPly(outputDir) {
     })
     .sort((a, b) => b.mtime - a.mtime);
   return files[0] || null;
+}
+
+function checkPixal3DStatus() {
+  const root = pixal3dRoot();
+  const repo = pixal3dRepoPath();
+  const py = pixal3dPythonPath();
+  const marker = pixal3dInstallMarkerPath();
+  return {
+    root,
+    repo,
+    repoExists: fs.existsSync(path.join(repo, 'inference.py')),
+    python: py,
+    pythonExists: fs.existsSync(py),
+    installMarker: marker,
+    installMarkerExists: fs.existsSync(marker),
+    ready: fs.existsSync(path.join(repo, 'inference.py')) && fs.existsSync(py) && fs.existsSync(marker),
+    license: 'Pixal3D academic-only, no commercial/production use, not intended for EU use.',
+  };
+}
+
+async function installPixal3D(request = {}) {
+  if (!request.acceptLicense) throw new Error('Pixal3D license gate not accepted. It is academic-only, non-production, and not intended for EU use.');
+  if (process.platform === 'win32') {
+    sendLog('Warning: Pixal3D upstream is Linux-first. Windows install uses community CUDA wheels and PyTorch SDPA fallback, isolated from SHARP.');
+  }
+  const root = pixal3dRoot();
+  const repo = pixal3dRepoPath();
+  fs.mkdirSync(root, { recursive: true });
+  sendJobState({ busy: true, label: 'Installing Pixal3D experimental backend' });
+  sendLog('Pixal3D experimental backend is isolated from the bundled SHARP runtime.');
+  sendLog('License gate accepted for local academic/research testing only; this is not bundled into the MIT app runtime.');
+
+  if (!fs.existsSync(path.join(repo, '.git'))) {
+    await runProcess('git', ['clone', '--depth', '1', 'https://github.com/TencentARC/Pixal3D.git', repo], { cwd: root });
+  } else {
+    await runProcess('git', ['fetch', '--depth', '1', 'origin', 'master'], { cwd: repo });
+    await runProcess('git', ['checkout', 'FETCH_HEAD'], { cwd: repo });
+    await runProcess('git', ['reset', '--hard', 'FETCH_HEAD'], { cwd: repo });
+  }
+
+  patchPixal3DWindowsSource(repo);
+
+  const uv = uvPath();
+  const env = {
+    UV_CACHE_DIR: path.join(root, 'uv-cache'),
+    UV_LINK_MODE: 'copy',
+    PIP_DISABLE_PIP_VERSION_CHECK: '1',
+  };
+  const pythonVersion = process.platform === 'win32' ? '3.11' : '3.10';
+  const py = pixal3dPythonPath();
+  const pyvenvCfg = path.join(pixal3dVenvPath(), 'pyvenv.cfg');
+  const existingVenvText = fs.existsSync(pyvenvCfg) ? fs.readFileSync(pyvenvCfg, 'utf8') : '';
+  const wrongWindowsPython = process.platform === 'win32' && existingVenvText && !existingVenvText.includes('version_info = 3.11');
+  if (process.platform === 'win32' && fs.existsSync(pixal3dVenvPath()) && (!fs.existsSync(py) || wrongWindowsPython)) {
+    sendLog('Removing incompatible/incomplete previous Pixal3D Windows venv before recreating it.');
+    fs.rmSync(pixal3dVenvPath(), { recursive: true, force: true });
+  }
+  if (fs.existsSync(py)) {
+    sendLog(`Reusing existing Pixal3D Python runtime: ${py}`);
+  } else {
+    await runProcess(uv, ['venv', pixal3dVenvPath(), '--python', pythonVersion, '--python-preference', 'managed'], { env });
+  }
+  const requirements = fs.existsSync(path.join(repo, 'requirements-hfdemo.txt')) && process.platform !== 'win32'
+    ? 'requirements-hfdemo.txt'
+    : 'requirements.txt';
+  const sourceRequirementsPath = path.join(repo, requirements);
+  const filteredRequirementsPath = path.join(root, `requirements-${process.platform}-no-natten.txt`);
+  const filteredRequirements = fs.readFileSync(sourceRequirementsPath, 'utf8')
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim().toLowerCase();
+      if (!trimmed || trimmed.startsWith('#')) return true;
+      if (trimmed.startsWith('natten')) return false;
+      if (trimmed.startsWith('torch==') || trimmed.startsWith('torchvision==')) return false;
+      if (trimmed.startsWith('triton==') && process.platform === 'win32') return false;
+      return true;
+    })
+    .join('\n');
+  fs.writeFileSync(filteredRequirementsPath, filteredRequirements);
+
+  sendLog('Pre-installing CUDA PyTorch for Pixal3D. This is large.');
+  if (process.platform === 'win32') {
+    await runProcess(uv, ['pip', 'install', '--python', py, '--index-url', 'https://download.pytorch.org/whl/cu128', 'torch==2.7.0', 'torchvision==0.22.0'], { cwd: repo, env });
+    sendLog('Installing Python build helpers required by MoGe transitive Git dependencies.');
+    await runProcess(uv, ['pip', 'install', '--python', py, 'setuptools>=70', 'wheel', 'packaging'], { cwd: repo, env });
+    sendLog('Installing Pixal3D inference dependencies missing from upstream requirements.txt.');
+    await runProcess(uv, ['pip', 'install', '--python', py, ...PIXAL3D_WINDOWS_INFERENCE_DEPS], { cwd: repo, env });
+    sendLog('Skipping NATTEN on Windows: official 0.21.0 wheels are Linux-only. Patched Pixal3D/NAF to use SDPA plus interpolation fallback instead.');
+    sendLog('Installing pinned community Windows CUDA wheels for Pixal3D mesh/texturing extensions (cumesh, flex_gemm, nvdiffrast, nvdiffrec_render, o_voxel).');
+    await runProcess(uv, ['pip', 'install', '--python', py, ...pixal3dWindowsWheelRequirements()], { cwd: repo, env });
+  } else {
+    await runProcess(uv, ['pip', 'install', '--python', py, '--extra-index-url', 'https://download.pytorch.org/whl/cu126', 'torch==2.7.0', 'torchvision==0.22.0'], { cwd: repo, env });
+    await runProcess(uv, ['pip', 'install', '--python', py, 'natten==0.21.0+torch270cu126', '-f', 'https://whl.natten.org'], { cwd: repo, env });
+  }
+
+  sendLog(`Installing remaining Pixal3D dependencies from filtered ${requirements}. This can still be large and CUDA-specific.`);
+  await runProcess(uv, ['pip', 'install', '--python', py, '--no-build-isolation', '-r', filteredRequirementsPath], { cwd: repo, env });
+  await runProcess(uv, ['pip', 'install', '--python', py, 'https://github.com/LDYang694/Storages/releases/download/20260430/utils3d-0.0.2-py3-none-any.whl'], { cwd: repo, env });
+  if (process.platform === 'win32') {
+    sendLog('Verifying Pixal3D import surface before marking install ready.');
+    await runProcess(py, ['-c', 'import transformers, timm, kornia, imageio, einops; from pixal3d.pipelines import Pixal3DImageTo3DPipeline; print("Pixal3D import check OK")'], {
+      cwd: repo,
+      env: pixal3dExecutionEnv(env),
+    });
+  }
+  fs.writeFileSync(pixal3dInstallMarkerPath(), JSON.stringify({
+    platform: process.platform,
+    pythonVersion,
+    attentionBackend: process.platform === 'win32' ? 'sdpa' : 'flash_attn',
+    installedAt: new Date().toISOString(),
+  }, null, 2));
+  sendLog('Pixal3D experimental install complete.');
+  sendJobState({ busy: false, label: 'Pixal3D ready' });
+  return checkPixal3DStatus();
+}
+
+async function runPixal3D(request = {}) {
+  if (!request.acceptLicense) throw new Error('Pixal3D license gate not accepted.');
+  if (!request.inputPath || !fs.existsSync(request.inputPath)) throw new Error('Input file does not exist.');
+  if (!request.outputFolder) throw new Error('Choose an output folder first.');
+  const status = checkPixal3DStatus();
+  if (!status.ready) await installPixal3D(request);
+  fs.mkdirSync(request.outputFolder, { recursive: true });
+  sendJobState({ busy: true, label: 'Running Pixal3D experimental GLB' });
+  sendLog('Running Pixal3D as an external experimental provider: image → GLB mesh/material output.');
+  sendLog('First Pixal3D run can sit quietly while Hugging Face downloads model weights; watch disk/network activity if the log pauses during model loading.');
+  if (process.platform === 'win32') sendLog(`Using Pixal3D background-removal model: ${pixal3dExecutionEnv().PIXAL3D_REMBG_MODEL}`);
+  const outputGlb = path.join(request.outputFolder, `${sanitizeStem(request.inputPath)}_pixal3d.glb`);
+  const args = ['-u', 'inference.py', '--image', request.inputPath, '--output', outputGlb, '--seed', String(request.seed || 42)];
+  await runProcess(pixal3dPythonPath(), args, { cwd: pixal3dRepoPath(), env: pixal3dExecutionEnv() });
+  const newest = fs.existsSync(outputGlb) ? { filePath: outputGlb, size: fs.statSync(outputGlb).size } : findNewestGlb(request.outputFolder);
+  if (!newest) throw new Error('Pixal3D finished but no .glb was found in the output folder.');
+  sendLog(`GLB written: ${newest.filePath}`);
+  sendJobState({ busy: false, label: 'Pixal3D complete' });
+  return { outputGlb: newest.filePath, sizeBytes: newest.size, provider: 'pixal3d-experimental' };
 }
 
 function sigmoid(v) {
@@ -500,6 +843,23 @@ ipcMain.handle('inspect-input', async (_event, inputPath, opts) => {
 });
 
 ipcMain.handle('check-runtime', checkRuntimeStatus);
+ipcMain.handle('check-pixal3d', async () => checkPixal3DStatus());
+ipcMain.handle('install-pixal3d', async (_event, request) => {
+  try {
+    return await installPixal3D(request || {});
+  } catch (err) {
+    sendJobState({ busy: false, label: 'Pixal3D install failed' });
+    throw err;
+  }
+});
+ipcMain.handle('run-pixal3d', async (_event, request) => {
+  try {
+    return await runPixal3D(request || {});
+  } catch (err) {
+    sendJobState({ busy: false, label: 'Pixal3D failed' });
+    throw err;
+  }
+});
 
 ipcMain.handle('install-runtime', async () => {
   try {
@@ -562,10 +922,21 @@ ipcMain.handle('open-path', async (_event, filePath) => {
 
 ipcMain.handle('load-ply-preview', async (_event, filePath) => loadPlyPreview(filePath));
 
+ipcMain.handle('load-glb-preview', async (_event, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) throw new Error('GLB file does not exist.');
+  const data = fs.readFileSync(filePath);
+  return `data:model/gltf-binary;base64,${data.toString('base64')}`;
+});
+
 ipcMain.handle('open-external', async (_event, url) => {
   if (typeof url === 'string' && /^https?:\/\//.test(url)) {
     await shell.openExternal(url);
     return true;
   }
   return false;
+});
+
+ipcMain.handle('copy-text', async (_event, text) => {
+  clipboard.writeText(String(text || ''));
+  return true;
 });
