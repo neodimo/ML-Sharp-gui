@@ -91,6 +91,7 @@ const el = {
 
 let babylonEngine = null;
 let babylonScene = null;
+let updateCheckTimer = null;
 
 function setStatus(message, kind = '') {
   el.status.className = `status ${kind}`.trim();
@@ -446,10 +447,24 @@ async function checkRuntime(showGood = true) {
 async function checkForUpdates() {
   el.updateButton.disabled = true;
   el.updateStatus.textContent = 'Checking for updates…';
+  clearTimeout(updateCheckTimer);
+  updateCheckTimer = setTimeout(() => {
+    if (el.updateButton.disabled) {
+      el.updateButton.disabled = false;
+      el.updateStatus.textContent = 'No update response yet. Try again in a moment.';
+    }
+  }, 15000);
   try {
     const result = await sharpSplat.checkForUpdates();
-    if (result && result.ok === false) el.updateStatus.textContent = result.message || 'Updater is unavailable in this build.';
+    if (result && result.ok === false) {
+      clearTimeout(updateCheckTimer);
+      updateCheckTimer = null;
+      el.updateStatus.textContent = result.message || 'Updater is unavailable in this build.';
+      el.updateButton.disabled = false;
+    }
   } catch (err) {
+    clearTimeout(updateCheckTimer);
+    updateCheckTimer = null;
     appendError('Update check failed', err);
     el.updateStatus.textContent = 'Update check failed — see Runtime log.';
     el.updateButton.disabled = false;
@@ -688,6 +703,8 @@ sharpSplat.onJobState((jobState) => {
 });
 sharpSplat.onUpdateState((update) => {
   if (!update) return;
+  clearTimeout(updateCheckTimer);
+  updateCheckTimer = null;
   el.updateStatus.textContent = update.message || update.status || '';
   appendLog(`[update] ${update.message || update.status}`);
   el.updateButton.disabled = update.status === 'checking' || update.status === 'downloading';
@@ -786,11 +803,13 @@ function drawPlyViewer() {
   const cx = (bounds.minX + bounds.maxX) * 0.5;
   const cy = (bounds.minY + bounds.maxY) * 0.5;
   const cz = (bounds.minZ + bounds.maxZ) * 0.5;
-  const extent = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, bounds.maxZ - bounds.minZ, 1e-6);
-  const scale = Math.min(width, height) * 0.72 * zoom / extent;
   const sinX = Math.sin(rotX), cosX = Math.cos(rotX);
   const sinY = Math.sin(rotY), cosY = Math.cos(rotY);
-  const pts = [];
+  const projected = [];
+  let minPX = Number.POSITIVE_INFINITY;
+  let minPY = Number.POSITIVE_INFINITY;
+  let maxPX = Number.NEGATIVE_INFINITY;
+  let maxPY = Number.NEGATIVE_INFINITY;
 
   for (let i = 0; i < positions.length; i += 3) {
     let x = positions[i] - cx;
@@ -800,9 +819,13 @@ function drawPlyViewer() {
     const z1 = -x * sinY + z * cosY;
     const y2 = y * cosX - z1 * sinX;
     const z2 = y * sinX + z1 * cosX;
-    pts.push({
-      x: width * 0.5 + x1 * scale + panX,
-      y: height * 0.5 - y2 * scale + panY,
+    minPX = Math.min(minPX, x1);
+    minPY = Math.min(minPY, y2);
+    maxPX = Math.max(maxPX, x1);
+    maxPY = Math.max(maxPY, y2);
+    projected.push({
+      x: x1,
+      y: y2,
       z: z2,
       r: colors[i],
       g: colors[i + 1],
@@ -810,6 +833,16 @@ function drawPlyViewer() {
     });
   }
 
+  const projectedWidth = Math.max(maxPX - minPX, 1e-6);
+  const projectedHeight = Math.max(maxPY - minPY, 1e-6);
+  const scale = Math.min(width * 0.82 / projectedWidth, height * 0.82 / projectedHeight) * zoom;
+  const centerPX = (minPX + maxPX) * 0.5;
+  const centerPY = (minPY + maxPY) * 0.5;
+  const pts = projected.map((pt) => ({
+    ...pt,
+    x: width * 0.5 + panX * dpr + (pt.x - centerPX) * scale,
+    y: height * 0.5 + panY * dpr - (pt.y - centerPY) * scale,
+  }));
   pts.sort((a, b) => a.z - b.z);
   const radius = Math.max(0.75 * dpr, Math.min(2.2 * dpr, 70000 / Math.max(positions.length, 1)));
   for (const pt of pts) {
@@ -841,9 +874,11 @@ async function loadGlbViewer(filePath) {
     await BABYLON.SceneLoader.AppendAsync('', dataUrl, babylonScene);
     const meshes = babylonScene.meshes.filter((m) => m.getTotalVertices && m.getTotalVertices() > 0);
     if (meshes.length) {
+      babylonScene.executeWhenReady(() => babylonEngine && babylonEngine.resize());
       const min = new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
       const max = new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
       for (const mesh of meshes) {
+        mesh.computeWorldMatrix(true);
         const info = mesh.getBoundingInfo();
         BABYLON.Vector3.MinimizeToRef(min, info.boundingBox.minimumWorld, min);
         BABYLON.Vector3.MaximizeToRef(max, info.boundingBox.maximumWorld, max);
@@ -856,6 +891,8 @@ async function loadGlbViewer(filePath) {
       camera.lowerRadiusLimit = radius * 0.1;
       camera.upperRadiusLimit = radius * 10;
       camera.radius = radius * 1.7;
+      camera.minZ = Math.max(0.001, radius / 1000);
+      camera.maxZ = Math.max(1000, radius * 1000);
     }
     babylonEngine.runRenderLoop(() => babylonScene && babylonScene.render());
     el.glbCanvas.addEventListener('dblclick', () => {

@@ -143,6 +143,13 @@ function sharpExePath() {
   return path.join(runtimeRoot(), 'venv', 'bin', 'sharp');
 }
 
+function sharpCommand() {
+  return {
+    command: venvPythonPath(),
+    argsPrefix: ['-c', 'from sharp.cli import main_cli; main_cli()'],
+  };
+}
+
 function panorama360Root() {
   return path.join(app.getPath('userData'), 'sharp-360-backend');
 }
@@ -1188,10 +1195,10 @@ ipcMain.handle('run-sharp', async (_event, request) => {
     if (!status.ready) await installRuntime();
 
     const prepared = await prepareInferenceInput(request.inputPath, request);
-    const sharp = sharpExePath();
-    const args = ['predict', '-i', prepared.inferencePath, '-o', request.outputFolder, '--device', request.device || 'default'];
+    const sharp = sharpCommand();
+    const args = [...sharp.argsPrefix, 'predict', '-i', prepared.inferencePath, '-o', request.outputFolder, '--device', request.device || 'default'];
     if (request.verbose) args.push('-v');
-    await runProcess(sharp, args, { cwd: mlSharpSourcePath() });
+    await runProcess(sharp.command, args, { cwd: mlSharpSourcePath() });
     const newest = findNewestPly(request.outputFolder);
     if (!newest) throw new Error('SHARP finished but no .ply was found in the output folder.');
     sendLog(`PLY written: ${newest.filePath}`);

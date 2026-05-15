@@ -44,7 +44,7 @@ li + li { margin-top: 0.35rem; }
 .brandBlock { display: flex; align-items: center; gap: 0.8rem; min-width: 0; }
 .brandMark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 14px; background: #242529; border: 1px solid rgba(238, 126, 48, 0.45); color: var(--accent); font-weight: 900; }
 .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.68rem; font-weight: 800; margin-bottom: 0.24rem; }
-.headerActions { display: flex; justify-content: flex-end; align-items: center; gap: 0.48rem; }
+.headerActions { display: flex; justify-content: flex-end; align-items: center; gap: 0.48rem; min-width: 0; }
 .pill { border: 1px solid rgba(238, 126, 48, 0.30); background: var(--accent-soft); color: #ffc394; border-radius: 999px; padding: 0.42rem 0.64rem; font-size: 0.78rem; font-weight: 800; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .workbench { height: calc(100vh - 78px); min-height: 0; overflow: hidden; display: grid; grid-template-columns: minmax(300px, 360px) minmax(560px, 1fr); gap: 0.9rem; padding: 0.9rem 1.25rem 1.15rem; }
@@ -91,7 +91,7 @@ li + li { margin-top: 0.35rem; }
 .status.good { color: var(--green); }
 .status.bad { color: var(--red); }
 .status.busy { color: var(--amber); }
-.compactStatus { margin: 0.45rem 1rem 0; }
+.compactStatus { margin: 0; max-width: 270px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .progressShell { height: 10px; overflow: hidden; border-radius: 999px; background: #303136; border: 1px solid var(--line); margin: 0.7rem 1rem 0; }
 .progressBar { height: 100%; width: 0%; border-radius: inherit; background: var(--accent); transition: width 220ms ease; }
 .progressBar.indeterminate { width: 45%; animation: indeterminate 1.2s ease-in-out infinite; }
@@ -111,6 +111,8 @@ li + li { margin-top: 0.35rem; }
 @media (max-width: 1120px) {
   html, body { overflow: auto; }
   .appHeader { height: auto; align-items: flex-start; flex-direction: column; }
+  .headerActions { flex-wrap: wrap; justify-content: flex-start; }
+  .compactStatus { max-width: min(100%, 420px); }
   .workbench { height: auto; overflow: visible; grid-template-columns: 1fr; }
   .leftRail, .centerStage { overflow: visible; }
   .centerStage { display: flex; flex-direction: column; }
