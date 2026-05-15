@@ -2,7 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { app, BrowserWindow, dialog, ipcMain, shell, clipboard } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { PNG } = require('pngjs');
@@ -69,6 +69,17 @@ function sendJobState(state) {
 
 function sendUpdateState(state) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-state', state);
+}
+
+function compareVersions(a, b) {
+  const pa = String(a || '').split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const pb = String(b || '').split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+  }
+  return 0;
 }
 
 function isPackagedWin() {
@@ -179,9 +190,22 @@ function resolvedVenvPythonPath(venvDir = path.join(runtimeRoot(), 'venv')) {
   return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || shim;
 }
 
+function canRunPythonSync(command, env = runtimePythonEnv()) {
+  if (!command || !fs.existsSync(command)) return false;
+  const result = spawnSync(command, ['-c', 'import sys; print(sys.executable)'], {
+    cwd: appRoot(),
+    env: { ...process.env, ...env },
+    windowsHide: true,
+    shell: false,
+    timeout: 15000,
+    encoding: 'utf8',
+  });
+  return result.status === 0;
+}
+
 function sharpCommand() {
   return {
-    command: resolvedVenvPythonPath(),
+    command: venvPythonPath(),
     argsPrefix: ['-c', 'from sharp.cli import main_cli; main_cli()'],
   };
 }
@@ -462,17 +486,20 @@ async function checkRuntimeStatus() {
   const sharp = sharpExePath();
   const ml = mlSharpSourcePath();
   const uv = uvPath();
+  const resolvedPython = resolvedVenvPythonPath();
+  const pythonRunnable = canRunPythonSync(py);
   return {
     runtimeRoot: root,
     mlSharpSource: ml,
     uv,
     uvExists: uv === 'uv' || uv === 'uv.exe' ? false : fs.existsSync(uv),
     python: py,
-    resolvedPython: resolvedVenvPythonPath(),
+    resolvedPython,
     pythonExists: fs.existsSync(py),
+    pythonRunnable,
     sharp: sharp,
     sharpExists: fs.existsSync(sharp),
-    ready: fs.existsSync(resolvedVenvPythonPath()) && fs.existsSync(sharp),
+    ready: pythonRunnable && fs.existsSync(sharp),
   };
 }
 
@@ -490,15 +517,24 @@ async function installRuntime() {
   const env = runtimePythonEnv();
 
   const py = venvPythonPath();
-  if (fs.existsSync(py) && fs.existsSync(resolvedVenvPythonPath())) {
+  if (fs.existsSync(py) && canRunPythonSync(py, env)) {
     sendLog(`Reusing existing Python virtual environment: ${venvDir}`);
   } else {
     const venvArgs = ['venv', venvDir, '--python', '3.13', '--python-preference', 'managed'];
     if (fs.existsSync(venvDir)) {
-      sendLog(`Existing virtual environment is incomplete; recreating: ${venvDir}`);
+      sendLog(`Existing SHARP virtual environment cannot run Python; recreating: ${venvDir}`);
       venvArgs.push('--clear');
     }
     await runProcess(uv, venvArgs, { env });
+    if (!canRunPythonSync(py, env)) {
+      sendLog('Recreated venv still cannot run Python; clearing uv-managed Python and rebuilding once.');
+      fs.rmSync(venvDir, { recursive: true, force: true });
+      fs.rmSync(path.join(runtimeRoot(), 'uv-python'), { recursive: true, force: true });
+      await runProcess(uv, ['venv', venvDir, '--python', '3.13', '--python-preference', 'managed'], { env });
+      if (!canRunPythonSync(py, env)) {
+        throw new Error('SHARP runtime Python was rebuilt, but it still cannot execute. The bundled uv runtime may be damaged.');
+      }
+    }
   }
 
   // Apple's requirements.txt contains `-e .`. For a portable app, install dependencies
@@ -514,6 +550,7 @@ async function installRuntime() {
     env,
   });
   await runProcess(uv, ['pip', 'install', '--python', py, ml], { cwd: ml, env });
+  await runProcess(py, ['-c', 'from sharp.cli import main_cli; print("SHARP import check OK")'], { cwd: ml, env });
 
   sendLog('Runtime install complete.');
   sendJobState({ busy: false, label: 'Runtime ready' });
@@ -653,7 +690,7 @@ async function installPanorama360() {
   const env = runtimePythonEnv();
   sendLog('Installing 360 backend Python extras into the existing SHARP runtime.');
   await runProcess(uv, ['pip', 'install', '--python', py, 'pillow', 'numpy', 'scipy', 'opencv-python', 'pillow-heif'], { cwd: repo, env });
-  await runProcess(resolvedVenvPythonPath(), ['-c', 'import PIL, numpy, scipy; import insp_to_splat; print("SHARP 360 import check OK")'], { cwd: repo, env });
+  await runProcess(venvPythonPath(), ['-c', 'import PIL, numpy, scipy; import insp_to_splat; print("SHARP 360 import check OK")'], { cwd: repo, env });
 
   fs.writeFileSync(marker, JSON.stringify({
     installedAt: new Date().toISOString(),
@@ -794,7 +831,7 @@ async function runPanorama360(request = {}) {
   sendJobState({ busy: true, label: 'Running 360 panorama SHARP' });
   sendLog('Running 360 panorama pipeline: ' + sideCount + ' views, ' + requestedAlignment + ' alignment, ' + (request.device || 'default') + ' device.');
   if ((request.device || 'default') === 'cpu') sendLog('CPU mode is supported as a fallback but will be slow.');
-  await runProcess(resolvedVenvPythonPath(), args, { cwd: panorama360RepoPath(), env: runtimePythonEnv() });
+  await runProcess(venvPythonPath(), args, { cwd: panorama360RepoPath(), env: runtimePythonEnv() });
 
   const newest = fs.existsSync(outputPly) ? { filePath: outputPly, size: fs.statSync(outputPly).size } : findNewestPly(request.outputFolder);
   if (!newest) throw new Error('360 panorama pipeline finished but no .ply was found in the output folder.');
@@ -1099,7 +1136,13 @@ ipcMain.handle('check-for-updates', async () => {
     return { ok: false, status: 'dev', message: 'Updates are only available in the installed Windows build.' };
   }
   const result = await autoUpdater.checkForUpdates();
-  return { ok: true, status: 'checking', result: !!result };
+  const latestVersion = result && result.updateInfo && result.updateInfo.version;
+  if (!latestVersion || compareVersions(latestVersion, app.getVersion()) <= 0) {
+    const state = { ok: true, status: 'none', message: `You're up to date (${app.getVersion()}).`, info: result && result.updateInfo };
+    sendUpdateState(state);
+    return state;
+  }
+  return { ok: true, status: 'checking', message: 'Checking for updates…', result: !!result };
 });
 
 ipcMain.handle('download-update', async () => {

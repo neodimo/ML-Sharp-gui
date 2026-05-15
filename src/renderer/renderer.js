@@ -11,6 +11,7 @@ const state = {
   busy: false,
   activeMode: 'sharp',
   inputIsPanorama: false,
+  inputPreviewAspect: 16 / 9,
   progressMode: 'idle',
   downloads: { active: false, startedAt: 0, totalBytes: 0, doneBytes: 0, files: new Map(), doneFiles: 0 },
   longPhase: { active: false, label: '', startedAt: 0 },
@@ -364,6 +365,19 @@ function humanBytes(bytes) {
   return `${value.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+function resizeInputPreviewShell() {
+  const shell = el.inputPreview && el.inputPreview.closest('.inputPreviewShell');
+  if (!shell) return;
+  const card = shell.closest('.inputCard');
+  const aspect = Math.max(0.1, Math.min(8, state.inputPreviewAspect || 16 / 9));
+  const availableWidth = Math.max(260, (card ? card.clientWidth : window.innerWidth) - 32);
+  const maxHeight = Math.max(320, Math.min(window.innerHeight * 0.58, 820));
+  const height = Math.min(maxHeight, availableWidth / aspect);
+  const width = Math.min(availableWidth, height * aspect);
+  shell.style.width = `${Math.round(width)}px`;
+  shell.style.height = `${Math.round(height)}px`;
+}
+
 async function refreshInputPreview() {
   if (!state.inputPath) return;
   setBusy(true);
@@ -371,12 +385,8 @@ async function refreshInputPreview() {
   try {
     const info = await sharpSplat.inspectInput(state.inputPath, readOptions());
     el.inputPreview.src = info.previewDataUrl;
-    const previewShell = el.inputPreview.closest('.inputPreviewShell');
-    if (previewShell) {
-      const aspect = Math.max(0.1, Math.min(8, info.width / Math.max(1, info.height)));
-      previewShell.style.setProperty('--preview-aspect', String(aspect));
-      previewShell.style.setProperty('--preview-max-width', `${Math.round(Math.min(1600, Math.max(360, 520 * aspect)))}px`);
-    }
+    state.inputPreviewAspect = info.width / Math.max(1, info.height);
+    resizeInputPreviewShell();
     el.inputPreview.classList.remove('hidden');
     el.inputPlaceholder.classList.add('hidden');
     state.inputIsPanorama = !!info.isPanorama;
@@ -467,6 +477,12 @@ async function checkForUpdates() {
       updateCheckTimer = null;
       el.updateStatus.textContent = result.message || 'Updater is unavailable in this build.';
       el.updateButton.disabled = false;
+    } else if (result && result.status === 'none') {
+      clearTimeout(updateCheckTimer);
+      updateCheckTimer = null;
+      el.updateStatus.textContent = result.message || 'No updates available.';
+      el.updateButton.disabled = false;
+      el.updateProgressBlock.classList.add('hidden');
     }
   } catch (err) {
     clearTimeout(updateCheckTimer);
@@ -968,7 +984,10 @@ el.plyCanvas.addEventListener('wheel', (event) => {
   drawPlyViewer();
 }, { passive: false });
 el.plyCanvas.addEventListener('dblclick', resetViewerCamera);
-window.addEventListener('resize', drawPlyViewer);
+window.addEventListener('resize', () => {
+  resizeInputPreviewShell();
+  drawPlyViewer();
+});
 
 window.addEventListener('keydown', (event) => {
   if (!el.plyCanvas || el.plyCanvas.classList.contains('hidden')) return;
