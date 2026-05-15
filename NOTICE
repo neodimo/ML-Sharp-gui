@@ -1,11 +1,11 @@
-ML-Sharp GUI Notices
+2D to 3D Notices
 ====================
 
-ML-Sharp GUI is an independent Windows GUI wrapper for Apple's ml-sharp / SHARP project. It is not an Apple product, is not developed by Apple, is not affiliated with Apple, and is not endorsed by Apple.
+2D to 3D is an independent Windows GUI wrapper for Apple's ml-sharp / SHARP project. It is not an Apple product, is not developed by Apple, is not affiliated with Apple, and is not endorsed by Apple.
 
 Project wrapper code
 --------------------
-Unless otherwise noted, the ML-Sharp GUI wrapper code in this repository is licensed under the MIT License. See ./LICENSE.
+Unless otherwise noted, the 2D to 3D wrapper code in this repository is licensed under the MIT License. See ./LICENSE.
 
 Apple ml-sharp / SHARP
 ----------------------

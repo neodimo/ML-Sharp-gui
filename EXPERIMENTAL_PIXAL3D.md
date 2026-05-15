@@ -1,6 +1,6 @@
 # Experimental Pixal3D Provider
 
-Pixal3D is **not** part of the bundled/default ML-Sharp GUI runtime.
+Pixal3D is **not** part of the bundled/default 2D to 3D runtime.
 
 It is wired only as an explicit experimental provider for local research testing:
 

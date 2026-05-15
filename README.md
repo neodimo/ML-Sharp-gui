@@ -1,4 +1,4 @@
-# ML-Sharp GUI
+# 2D to 3D
 
 Independent Windows GUI wrapper for Apple `ml-sharp` / SHARP: one frame in, standard 3D Gaussian Splat `.ply` out.
 
@@ -21,22 +21,22 @@ This is not an Apple product, is not affiliated with Apple, and is not endorsed 
 
 ## Packaging / updates
 
-Starting with v0.4, the preferred Windows build is an installer build (`ML-Sharp-GUI-Setup-<version>.exe`) instead of a manually managed portable ZIP folder.
+Starting with v0.4, the preferred Windows build is an installer build (`2D-to-3D-Setup-<version>.exe`) instead of a manually managed portable ZIP folder.
 
 The app includes **Check updates** and **Restart to update** controls. Updates are downloaded through GitHub Releases and applied on restart by Electron's standard updater.
 
 SHARP depends on Python, PyTorch, torchvision, gsplat, and a model checkpoint, so that heavy runtime is kept outside the app install in Electron's stable user-data folder:
 
 ```text
-%APPDATA%/ML-Sharp GUI/sharp-runtime/
+%APPDATA%/2D to 3D/sharp-runtime/
 ```
 
 That keeps app updates from reinstalling the Python/PyTorch/model runtime every time.
 
 ## First run on Windows
 
-1. Run `ML-Sharp-GUI-Setup-<version>.exe`.
-2. Launch **ML-Sharp GUI** from the installer shortcut.
+1. Run `2D-to-3D-Setup-<version>.exe`.
+2. Launch **2D to 3D** from the installer shortcut.
 3. Click **Install/check runtime** or just **Run SHARP**.
 4. The first runtime install may take a while and needs internet; PyTorch and the SHARP model are large.
 5. Choose an input frame and output folder, then run.
@@ -45,7 +45,7 @@ Apple SHARP source is bundled under the app's `resources/ml-sharp` folder. The P
 
 ## Licensing / attribution
 
-- ML-Sharp GUI wrapper code is licensed under MIT. See `LICENSE`.
+- 2D to 3D wrapper code is licensed under MIT. See `LICENSE`.
 - Apple `ml-sharp` / SHARP source is vendored under `vendor/ml-sharp` and remains governed by Apple's license and model license. See `vendor/ml-sharp/LICENSE` and `vendor/ml-sharp/LICENSE_MODEL`.
 - Bundled `uv` Windows binaries under `vendor/uv` come from Astral's `uv` project and remain under upstream uv licensing.
 - See `NOTICE` for attribution and no-endorsement notes.
