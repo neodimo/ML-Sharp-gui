@@ -10,6 +10,7 @@ const state = {
   outputFile: '',
   busy: false,
   activeMode: 'sharp',
+  inputIsPanorama: false,
   progressMode: 'idle',
   downloads: { active: false, startedAt: 0, totalBytes: 0, doneBytes: 0, files: new Map(), doneFiles: 0 },
   longPhase: { active: false, label: '', startedAt: 0 },
@@ -38,8 +39,10 @@ const el = {
   device: $('device'),
   sharpAdvancedPanel: $('sharpAdvancedPanel'),
   sharpModeButton: $('sharpModeButton'),
+  panoramaModeButton: $('panoramaModeButton'),
   pixalModeButton: $('pixalModeButton'),
   sharpModePanel: $('sharpModePanel'),
+  panoramaModePanel: $('panoramaModePanel'),
   pixalModePanel: $('pixalModePanel'),
   modeSummary: $('modeSummary'),
   resultPanel: $('resultPanel'),
@@ -64,6 +67,11 @@ const el = {
   pixalAccept: $('pixalAccept'),
   pixalRunButton: $('pixalRunButton'),
   pixalStatus: $('pixalStatus'),
+  panoramaSideCount: $('panoramaSideCount'),
+  panoramaAlignmentMode: $('panoramaAlignmentMode'),
+  panoramaKeepIntermediates: $('panoramaKeepIntermediates'),
+  panoramaRunButton: $('panoramaRunButton'),
+  panoramaStatus: $('panoramaStatus'),
   updateButton: $('updateButton'),
   restartUpdateButton: $('restartUpdateButton'),
   updateStatus: $('updateStatus'),
@@ -268,10 +276,13 @@ function updateProgressFromLog(line) {
   } else if (text.includes('predict') || text.includes('running sharp')) {
     setProgress('busy');
     setProgressDetails('Running SHARP…');
+  } else if (text.includes('360 panorama pipeline') || text.includes('running 360')) {
+    setProgress('busy');
+    setProgressDetails('Running 360 panorama SHARP…');
   } else if (text.includes('running pixal3d')) {
     setProgress('busy');
     setProgressDetails('Running Pixal3D…');
-  } else if (text.includes('ply written') || text.includes('glb written') || text.includes('complete')) {
+  } else if (text.includes('ply written') || text.includes('360 ply written') || text.includes('glb written') || text.includes('complete')) {
     state.longPhase.active = false;
     resetDownloadProgress();
     setProgress('done');
@@ -286,20 +297,26 @@ function setBusy(busy) {
   el.chooseInput.disabled = busy;
   el.chooseOutputFolder.disabled = busy;
   el.runButton.disabled = busy;
+  el.panoramaRunButton.disabled = busy;
   el.pixalRunButton.disabled = busy;
   el.cancelButton.disabled = !busy;
 }
 
 function setMode(mode) {
+  if (mode === 'panorama' && !state.inputIsPanorama) mode = 'sharp';
   state.activeMode = mode;
   const isSharp = mode === 'sharp';
+  const isPanorama = mode === 'panorama';
+  const isPixal = mode === 'pixal';
   el.sharpModeButton.classList.toggle('active', isSharp);
-  el.pixalModeButton.classList.toggle('active', !isSharp);
+  el.panoramaModeButton.classList.toggle('active', isPanorama);
+  el.pixalModeButton.classList.toggle('active', isPixal);
   el.sharpModePanel.classList.toggle('hidden', !isSharp);
-  el.pixalModePanel.classList.toggle('hidden', isSharp);
-  el.sharpAdvancedPanel.classList.toggle('hidden', !isSharp);
-  el.modeSummary.textContent = isSharp ? 'SHARP .PLY selected' : 'Pixal3D .GLB selected';
-  setStatus(isSharp ? 'SHARP will output a Gaussian splat .PLY.' : 'Pixal3D will output an experimental textured .GLB.', 'busy');
+  el.panoramaModePanel.classList.toggle('hidden', !isPanorama);
+  el.pixalModePanel.classList.toggle('hidden', !isPixal);
+  el.sharpAdvancedPanel.classList.toggle('hidden', isPixal);
+  el.modeSummary.textContent = isSharp ? 'SHARP .PLY selected' : (isPanorama ? '360 panorama .PLY selected' : 'Pixal3D .GLB selected');
+  setStatus(isSharp ? 'SHARP will output a Gaussian splat .PLY.' : (isPanorama ? '360 mode will output a merged Gaussian splat .PLY.' : 'Pixal3D will output an experimental textured .GLB.'), 'busy');
 }
 
 function showOutputPanel(kind) {
@@ -323,6 +340,9 @@ function readOptions() {
     device: el.device.value,
     verbose: true,
     acceptLicense: !!el.pixalAccept.checked,
+    panoramaSideCount: el.panoramaSideCount.value,
+    panoramaAlignmentMode: el.panoramaAlignmentMode.value,
+    panoramaKeepIntermediates: !!el.panoramaKeepIntermediates.checked,
   };
 }
 
@@ -344,14 +364,25 @@ async function refreshInputPreview() {
     el.inputPreview.src = info.previewDataUrl;
     el.inputPreview.classList.remove('hidden');
     el.inputPlaceholder.classList.add('hidden');
-    el.inputInfo.textContent = `${info.width}×${info.height} • ${info.source.toUpperCase()} • ${el.sourceColorSpace.value}`;
-    setStatus('Input loaded. Choose output folder, then run SHARP.', 'good');
+    state.inputIsPanorama = !!info.isPanorama;
+    el.panoramaModeButton.classList.toggle('hidden', !state.inputIsPanorama);
+    el.inputInfo.textContent = `${info.width}×${info.height} • ${info.source.toUpperCase()} • ${state.inputIsPanorama ? '360 pano' : el.sourceColorSpace.value}`;
+    if (state.inputIsPanorama) {
+      setStatus('2:1 panorama detected. 360 SHARP mode is available.', 'good');
+      if (state.activeMode === 'sharp') setMode('panorama');
+    } else {
+      if (state.activeMode === 'panorama') setMode('sharp');
+      setStatus('Input loaded. Choose output folder, then run SHARP.', 'good');
+    }
     setProgress('idle');
   } catch (err) {
     el.inputPreview.removeAttribute('src');
     el.inputPreview.classList.add('hidden');
     el.inputPlaceholder.classList.remove('hidden');
     el.inputInfo.textContent = '';
+    state.inputIsPanorama = false;
+    el.panoramaModeButton.classList.add('hidden');
+    if (state.activeMode === 'panorama') setMode('sharp');
     appendError('Preview failed', err);
     setStatus('Preview failed — see Runtime log.', 'bad');
   } finally {
@@ -465,6 +496,67 @@ async function runSharp() {
   } catch (err) {
     appendError('SHARP failed', err);
     setStatus('SHARP failed — see Runtime log.', 'bad');
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function checkPanorama360(showGood = true) {
+  try {
+    const status = await sharpSplat.checkPanorama360();
+    el.panoramaStatus.textContent = status.ready ? `Ready: ${status.repo}` : `Needs install: ${status.root}`;
+    appendLog(`360 backend root: ${status.root}`);
+    appendLog(`360 backend repo: ${status.repoExists ? status.repo : 'not cloned yet'}`);
+    if (showGood) setStatus(status.ready ? '360 panorama backend ready.' : '360 panorama backend not installed yet.', status.ready ? 'good' : 'busy');
+    return status;
+  } catch (err) {
+    appendError('360 backend check failed', err);
+    el.panoramaStatus.textContent = '360 backend check failed — see Runtime log.';
+    return null;
+  }
+}
+
+async function installPanorama360() {
+  resetDownloadProgress();
+  setBusy(true);
+  setStatus('Installing/checking 360 panorama backend… first run can be large.', 'busy');
+  try {
+    await sharpSplat.installPanorama360();
+    setStatus('360 panorama backend ready.', 'good');
+    await checkPanorama360(false);
+  } catch (err) {
+    appendError('360 backend install failed', err);
+    setStatus('360 backend install failed — see Runtime log.', 'bad');
+    el.panoramaStatus.textContent = 'Install failed — see Runtime log.';
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function runPanorama360() {
+  resetDownloadProgress();
+  if (!state.inputPath) { setStatus('Choose a 2:1 panorama first.', 'bad'); return; }
+  if (!state.inputIsPanorama) { setStatus('360 mode needs a stitched 2:1 panorama input.', 'bad'); return; }
+  if (!state.outputFolder) { await chooseOutputFolder(); if (!state.outputFolder) return; }
+  el.resultActions.classList.add('hidden');
+  state.outputPly = '';
+  state.outputFile = '';
+  setProgress('busy');
+  setBusy(true);
+  setStatus('Running 360 panorama SHARP…', 'busy');
+  try {
+    const result = await sharpSplat.runPanorama360(readOptions());
+    state.outputPly = result.outputPly;
+    state.outputFile = result.outputPly;
+    el.resultActions.classList.remove('hidden');
+    showOutputPanel('ply');
+    const size = result.sizeBytes ? ` • ${humanBytes(result.sizeBytes)}` : '';
+    setStatus(`360 panorama PLY done: ${result.outputPly}${size}.`, 'good');
+    setProgress('done');
+    await loadPlyViewer(result.outputPly);
+  } catch (err) {
+    appendError('360 panorama SHARP failed', err);
+    setStatus('360 panorama SHARP failed — see Runtime log.', 'bad');
   } finally {
     setBusy(false);
   }
@@ -588,8 +680,10 @@ sharpSplat.onUpdateState((update) => {
 el.chooseInput.addEventListener('click', chooseInput);
 el.chooseOutputFolder.addEventListener('click', chooseOutputFolder);
 el.sharpModeButton.addEventListener('click', () => setMode('sharp'));
+el.panoramaModeButton.addEventListener('click', () => setMode('panorama'));
 el.pixalModeButton.addEventListener('click', () => setMode('pixal'));
 el.runButton.addEventListener('click', runSharp);
+el.panoramaRunButton.addEventListener('click', runPanorama360);
 el.cancelButton.addEventListener('click', cancelJob);
 el.copyLogButton.addEventListener('click', copyLog);
 el.pixalRunButton.addEventListener('click', runPixal3D);

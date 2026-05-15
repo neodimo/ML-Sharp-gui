@@ -130,6 +130,18 @@ function sharpExePath() {
   return path.join(runtimeRoot(), 'venv', 'bin', 'sharp');
 }
 
+function panorama360Root() {
+  return path.join(app.getPath('userData'), 'sharp-360-backend');
+}
+
+function panorama360RepoPath() {
+  return path.join(panorama360Root(), 'SHARP_360_to_Splat');
+}
+
+function panorama360InstallMarkerPath() {
+  return path.join(panorama360Root(), 'install-v1.json');
+}
+
 function pixal3dRoot() {
   return path.join(app.getPath('userData'), 'pixal3d-experimental');
 }
@@ -490,6 +502,117 @@ function findNewestGlb(outputDir) {
   return findNewestByExt(outputDir, '.glb');
 }
 
+function isPanoramaLike(width, height) {
+  if (!width || !height) return false;
+  return Math.abs((width / height) - 2) <= 0.06;
+}
+
+function checkPanorama360Status() {
+  const root = panorama360Root();
+  const repo = panorama360RepoPath();
+  const script = path.join(repo, 'insp_to_splat.py');
+  const marker = panorama360InstallMarkerPath();
+  return {
+    root,
+    repo,
+    script,
+    repoExists: fs.existsSync(script),
+    marker,
+    markerExists: fs.existsSync(marker),
+    ready: fs.existsSync(script) && fs.existsSync(marker),
+  };
+}
+
+async function installPanorama360() {
+  ensureDirs();
+  const runtime = await checkRuntimeStatus();
+  if (!runtime.ready) await installRuntime();
+
+  const root = panorama360Root();
+  const repo = panorama360RepoPath();
+  fs.mkdirSync(root, { recursive: true });
+  sendJobState({ busy: true, label: 'Installing 360 panorama backend' });
+  sendLog('Installing/checking SHARP 360 panorama backend. It stays isolated under app user-data.');
+
+  if (!fs.existsSync(path.join(repo, '.git'))) {
+    await runProcess('git', ['clone', '--depth', '1', '--recurse-submodules', 'https://github.com/Enndee/SHARP_360_to_Splat.git', repo], { cwd: root });
+  } else {
+    await runProcess('git', ['fetch', '--depth', '1', 'origin', 'main'], { cwd: repo });
+    await runProcess('git', ['checkout', 'FETCH_HEAD'], { cwd: repo });
+    await runProcess('git', ['reset', '--hard', 'FETCH_HEAD'], { cwd: repo });
+    await runProcess('git', ['submodule', 'update', '--init', '--recursive'], { cwd: repo });
+  }
+
+  const py = venvPythonPath();
+  const uv = uvPath();
+  const env = {
+    UV_CACHE_DIR: path.join(runtimeRoot(), 'uv-cache'),
+    UV_LINK_MODE: 'copy',
+    PIP_DISABLE_PIP_VERSION_CHECK: '1',
+  };
+  sendLog('Installing 360 backend Python extras into the existing SHARP runtime.');
+  await runProcess(uv, ['pip', 'install', '--python', py, 'pillow', 'numpy', 'scipy', 'opencv-python', 'pillow-heif'], { cwd: repo, env });
+  await runProcess(py, ['-c', 'import PIL, numpy, scipy; import insp_to_splat; print("SHARP 360 import check OK")'], { cwd: repo });
+
+  fs.writeFileSync(marker, JSON.stringify({
+    installedAt: new Date().toISOString(),
+    repo,
+    python: py,
+  }, null, 2));
+  sendLog('SHARP 360 panorama backend ready.');
+  sendJobState({ busy: false, label: '360 backend ready' });
+  return checkPanorama360Status();
+}
+
+async function runPanorama360(request = {}) {
+  if (!request.inputPath || !fs.existsSync(request.inputPath)) throw new Error('Input panorama file does not exist.');
+  if (!request.outputFolder) throw new Error('Choose an output folder first.');
+  const ext = path.extname(request.inputPath).toLowerCase();
+  if (!['.png', '.jpg', '.jpeg'].includes(ext)) {
+    throw new Error('360 panorama mode currently supports stitched PNG/JPEG inputs. Convert HEIC/WEBP/EXR to PNG first.');
+  }
+
+  const status = checkPanorama360Status();
+  if (!status.ready) await installPanorama360();
+
+  fs.mkdirSync(request.outputFolder, { recursive: true });
+  const outputPly = path.join(request.outputFolder, sanitizeStem(request.inputPath) + '_360_merged.ply');
+  const sideCount = Math.max(2, Math.min(12, Number.parseInt(request.panoramaSideCount || 4, 10) || 4));
+  const alignmentMode = request.panoramaAlignmentMode === 'da360' ? 'da360' : 'overlap';
+  const args = [
+    '-u',
+    path.join(panorama360RepoPath(), 'insp_to_splat.py'),
+    '-i',
+    request.inputPath,
+    '-o',
+    outputPly,
+    '--side-count',
+    String(sideCount),
+    '--format',
+    'ply',
+    '--device',
+    request.device || 'default',
+    '--alignment-mode',
+    alignmentMode,
+    '--config',
+    path.join(panorama360RepoPath(), alignmentMode === 'overlap' ? 'insp_settings_starter.json' : 'insp_settings.json'),
+    '--verbose',
+  ];
+  if (request.panoramaKeepIntermediates) args.push('--keep-intermediates');
+  else args.push('--delete-temp-files');
+
+  sendJobState({ busy: true, label: 'Running 360 panorama SHARP' });
+  sendLog('Running 360 panorama pipeline: ' + sideCount + ' views, ' + alignmentMode + ' alignment, ' + (request.device || 'default') + ' device.');
+  if ((request.device || 'default') === 'cpu') sendLog('CPU mode is supported as a fallback but will be slow.');
+  await runProcess(venvPythonPath(), args, { cwd: panorama360RepoPath() });
+
+  const newest = fs.existsSync(outputPly) ? { filePath: outputPly, size: fs.statSync(outputPly).size } : findNewestPly(request.outputFolder);
+  if (!newest) throw new Error('360 panorama pipeline finished but no .ply was found in the output folder.');
+  sendLog('360 PLY written: ' + newest.filePath);
+  sendJobState({ busy: false, label: '360 panorama complete' });
+  return { ok: true, outputPly: newest.filePath, outputFolder: request.outputFolder, sizeBytes: newest.size, provider: 'sharp-360' };
+}
+
 function _oldFindNewestPly(outputDir) {
   if (!fs.existsSync(outputDir)) return null;
   const files = fs.readdirSync(outputDir)
@@ -832,10 +955,12 @@ ipcMain.handle('select-output-folder', async () => {
 ipcMain.handle('inspect-input', async (_event, inputPath, opts) => {
   if (!inputPath || !fs.existsSync(inputPath)) throw new Error('Input file does not exist.');
   const image = await loadImage(inputPath, opts || {});
+  const ext = path.extname(inputPath).toLowerCase();
   const previewDataUrl = makePreviewPngDataUrl(image, 1400);
   return {
     width: image.width,
     height: image.height,
+    isPanorama: isPanoramaLike(image.width, image.height) && ['.png', '.jpg', '.jpeg'].includes(ext),
     source: image.source,
     sourceColorSpace: image.sourceColorSpace,
     previewDataUrl,
@@ -843,6 +968,23 @@ ipcMain.handle('inspect-input', async (_event, inputPath, opts) => {
 });
 
 ipcMain.handle('check-runtime', checkRuntimeStatus);
+ipcMain.handle('check-panorama360', async () => checkPanorama360Status());
+ipcMain.handle('install-panorama360', async () => {
+  try {
+    return await installPanorama360();
+  } catch (err) {
+    sendJobState({ busy: false, label: '360 backend install failed' });
+    throw err;
+  }
+});
+ipcMain.handle('run-panorama360', async (_event, request) => {
+  try {
+    return await runPanorama360(request || {});
+  } catch (err) {
+    sendJobState({ busy: false, label: '360 panorama failed' });
+    throw err;
+  }
+});
 ipcMain.handle('check-pixal3d', async () => checkPixal3DStatus());
 ipcMain.handle('install-pixal3d', async (_event, request) => {
   try {
