@@ -116,7 +116,7 @@ li + li { margin-top: 0.35rem; }
   .workbench { height: auto; overflow: visible; grid-template-columns: 1fr; }
   .leftRail, .centerStage { overflow: visible; }
   .centerStage { display: flex; flex-direction: column; }
-  .inputCard { display: flex; overflow: visible; }
+  .inputCard { display: flex; flex-direction: column; overflow: visible; }
   .inputPreviewShell { min-height: 260px; height: auto; }
   .inputPreviewShell.hasPreview { min-height: 0; }
   .previewShell img { width: auto; height: auto; max-width: 100%; max-height: min(70vh, 760px); }
