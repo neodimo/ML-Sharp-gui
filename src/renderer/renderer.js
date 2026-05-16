@@ -897,6 +897,8 @@ function createBabylonViewer(canvas, kind) {
   babylonScene = new BABYLON.Scene(babylonEngine);
   babylonScene.clearColor = new BABYLON.Color4(0.06, 0.065, 0.075, 1);
   babylonCamera = new BABYLON.ArcRotateCamera('camera', Math.PI / 2.4, Math.PI / 2.7, 2.4, BABYLON.Vector3.Zero(), babylonScene);
+  // Start 180° opposite so we see the front of the object by default
+  babylonCamera.alpha = Math.PI / 2.4 + Math.PI;
   babylonCamera.attachControl(canvas, true);
   babylonCamera.wheelPrecision = 45;
   new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0.3, 1, 0.4), babylonScene).intensity = 1.1;
@@ -997,7 +999,7 @@ async function loadGlbViewer(filePath) {
           glbMin.copyFrom(BABYLON.Vector3.Minimize(glbMin, n.getBoundingInfo().boundingBox.minimumWorld));
           glbMax.copyFrom(BABYLON.Vector3.Maximize(glbMax, n.getBoundingInfo().boundingBox.maximumWorld));
         }
-        camera.setTarget(glbMin.add(glbMax).scale(0.5));
+        camera.setTarget(glbMin.add(glbMax).scale(0.5).add(new BABYLON.Vector3(0, 0.05, 0)));
         const ext = glbMax.subtract(glbMin);
         camera.radius = Math.max(0.8, ext.length() * 0.55) * 1.7;
       }
