@@ -917,8 +917,8 @@ function boundsFromMeshes(meshes) {
     if (!mesh || !mesh.getBoundingInfo) continue;
     mesh.computeWorldMatrix(true);
     const info = mesh.getBoundingInfo();
-    BABYLON.Vector3.MinimizeToRef(min, info.boundingBox.minimumWorld, min);
-    BABYLON.Vector3.MaximizeToRef(max, info.boundingBox.maximumWorld, max);
+    min.copyFrom(info.boundingBox.minimumWorld);
+    max.copyFrom(info.boundingBox.maximumWorld);
     found = true;
   }
   return found ? { min, max } : null;
@@ -991,8 +991,12 @@ async function loadGlbViewer(filePath) {
     startBabylonRenderLoop();
     el.glbCanvas.addEventListener('dblclick', () => {
       if (meshes.length) {
-        const glbMin = meshes.reduce((m, n) => BABYLON.Vector3.Minimize(m, n.getBoundingInfo().boundingBox.minimumWorld), new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY));
-        const glbMax = meshes.reduce((m, n) => BABYLON.Vector3.Maximize(m, n.getBoundingInfo().boundingBox.maximumWorld), new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY));
+        let glbMin = new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+        let glbMax = new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
+        for (const n of meshes) {
+          glbMin.copyFrom(BABYLON.Vector3.Minimize(glbMin, n.getBoundingInfo().boundingBox.minimumWorld));
+          glbMax.copyFrom(BABYLON.Vector3.Maximize(glbMax, n.getBoundingInfo().boundingBox.maximumWorld));
+        }
         camera.setTarget(glbMin.add(glbMax).scale(0.5));
         const ext = glbMax.subtract(glbMin);
         camera.radius = Math.max(0.8, ext.length() * 0.55) * 1.7;
