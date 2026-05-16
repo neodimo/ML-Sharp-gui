@@ -2,6 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const { spawn, spawnSync } = require('child_process');
 const { app, BrowserWindow, dialog, ipcMain, shell, clipboard } = require('electron');
 const { autoUpdater } = require('electron-updater');
@@ -1140,6 +1141,7 @@ function loadPlyPreview(filePath, maxPoints = 140000) {
 
   if (!written) throw new Error('PLY contained no readable vertices.');
   return {
+    fileUrl: pathToFileURL(filePath).href,
     vertexCount: header.vertexCount,
     shownCount: written,
     positions: Array.from(positions.slice(0, written * 3)),
@@ -1323,6 +1325,14 @@ ipcMain.handle('open-path', async (_event, filePath) => {
 });
 
 ipcMain.handle('load-ply-preview', async (_event, filePath) => loadPlyPreview(filePath));
+
+ipcMain.handle('load-ply-bytes', async (_event, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) throw new Error('PLY file does not exist.');
+  return {
+    name: path.basename(filePath),
+    base64: fs.readFileSync(filePath).toString('base64'),
+  };
+});
 
 ipcMain.handle('load-glb-preview', async (_event, filePath) => {
   if (!filePath || !fs.existsSync(filePath)) throw new Error('GLB file does not exist.');

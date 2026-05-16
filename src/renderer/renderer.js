@@ -26,6 +26,7 @@ const state = {
     dragging: false,
     lastX: 0,
     lastY: 0,
+    useBabylon: false,
   },
 };
 
@@ -79,10 +80,7 @@ const el = {
   updateProgressBlock: $('updateProgressBlock'),
   updateProgressBar: $('updateProgressBar'),
   updateProgressLabel: $('updateProgressLabel'),
-  updateProgressBlock: $(updateProgressBlock),
-  updateProgressBar: $(updateProgressBar),
-  updateProgressLabel: $(updateProgressLabel),
-  updateStatus: $(updateStatus),
+  updateStatus: $('updateStatus'),
   plyCanvas: $('plyCanvas'),
   viewerPlaceholder: $('viewerPlaceholder'),
   viewerHelp: $('viewerHelp'),
@@ -91,6 +89,8 @@ const el = {
 
 let babylonEngine = null;
 let babylonScene = null;
+let babylonCamera = null;
+let activeBabylonKind = '';
 let updateCheckTimer = null;
 
 function setStatus(message, kind = '') {
@@ -861,50 +861,119 @@ function drawPlyViewer() {
   }
 }
 
+function disposeBabylonViewer() {
+  if (babylonEngine) {
+    babylonEngine.dispose();
+    babylonEngine = null;
+  }
+  babylonScene = null;
+  babylonCamera = null;
+  activeBabylonKind = '';
+  state.viewer.useBabylon = false;
+  if (window._babylonResizeHandler) {
+    window.removeEventListener('resize', window._babylonResizeHandler);
+    window._babylonResizeHandler = null;
+  }
+}
+
+function createBabylonViewer(canvas, kind) {
+  disposeBabylonViewer();
+  babylonEngine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+  babylonScene = new BABYLON.Scene(babylonEngine);
+  babylonScene.clearColor = new BABYLON.Color4(0.06, 0.065, 0.075, 1);
+  babylonCamera = new BABYLON.ArcRotateCamera('camera', Math.PI / 2.4, Math.PI / 2.7, 2.4, BABYLON.Vector3.Zero(), babylonScene);
+  babylonCamera.attachControl(canvas, true);
+  babylonCamera.wheelPrecision = 45;
+  new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0.3, 1, 0.4), babylonScene).intensity = 1.1;
+  const dir = new BABYLON.DirectionalLight('key', new BABYLON.Vector3(-0.6, -1, -0.8), babylonScene);
+  dir.intensity = 1.4;
+  activeBabylonKind = kind;
+  state.viewer.useBabylon = true;
+  window._babylonResizeHandler = () => babylonEngine && babylonEngine.resize();
+  window.addEventListener('resize', window._babylonResizeHandler);
+  return { engine: babylonEngine, scene: babylonScene, camera: babylonCamera };
+}
+
+function boundsFromMeshes(meshes) {
+  const min = new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+  const max = new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
+  let found = false;
+  for (const mesh of meshes || []) {
+    if (!mesh || !mesh.getBoundingInfo) continue;
+    mesh.computeWorldMatrix(true);
+    const info = mesh.getBoundingInfo();
+    BABYLON.Vector3.MinimizeToRef(min, info.boundingBox.minimumWorld, min);
+    BABYLON.Vector3.MaximizeToRef(max, info.boundingBox.maximumWorld, max);
+    found = true;
+  }
+  return found ? { min, max } : null;
+}
+
+function boundsFromPlyMeta(ply) {
+  if (!ply || !ply.bounds) return null;
+  const { minX, minY, minZ, maxX, maxY, maxZ } = ply.bounds;
+  if (![minX, minY, minZ, maxX, maxY, maxZ].every(Number.isFinite)) return null;
+  return {
+    min: new BABYLON.Vector3(minX, minY, minZ),
+    max: new BABYLON.Vector3(maxX, maxY, maxZ),
+  };
+}
+
+function fitBabylonCamera(camera, meshes, fallbackPly) {
+  const box = boundsFromMeshes(meshes) || boundsFromPlyMeta(fallbackPly);
+  if (!box) return;
+  const center = box.min.add(box.max).scale(0.5);
+  const extent = box.max.subtract(box.min);
+  const radius = Math.max(0.8, extent.length() * 0.55);
+  camera.setTarget(center);
+  camera.lowerRadiusLimit = radius * 0.05;
+  camera.upperRadiusLimit = radius * 20;
+  camera.radius = radius * 1.8;
+  camera.minZ = Math.max(0.001, radius / 1000);
+  camera.maxZ = Math.max(1000, radius * 1000);
+}
+
+function startBabylonRenderLoop() {
+  if (!babylonEngine || !babylonScene) return;
+  babylonEngine.resize();
+  babylonEngine.runRenderLoop(() => babylonScene && babylonScene.render());
+}
+
+function decodeBase64ToUint8Array(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function importPlyWithBabylon(filePath, plyMeta) {
+  if (!window.BABYLON || !BABYLON.SceneLoader) throw new Error('Babylon SPLAT loader is not available.');
+  const { scene } = createBabylonViewer(el.plyCanvas, 'ply');
+  try {
+    return await BABYLON.SceneLoader.ImportMeshAsync('', '', plyMeta.fileUrl, scene, undefined, '.ply', filePath.split(/[\\/]/).pop() || 'output.ply');
+  } catch (fileUrlError) {
+    appendLog('Babylon file URL PLY load failed, retrying through app bridge: ' + (fileUrlError.message || fileUrlError));
+    disposeBabylonViewer();
+    const retry = createBabylonViewer(el.plyCanvas, 'ply');
+    const bytes = await sharpSplat.loadPlyBytes(filePath);
+    return BABYLON.SceneLoader.ImportMeshAsync('', '', decodeBase64ToUint8Array(bytes.base64), retry.scene, undefined, '.ply', bytes.name || 'output.ply');
+  }
+}
+
 async function loadGlbViewer(filePath) {
   if (!filePath || !el.glbCanvas || !window.BABYLON) return;
   showOutputPanel('glb');
   el.viewerInfo.textContent = 'Loading GLB preview…';
   try {
-    if (babylonEngine) {
-      babylonEngine.dispose();
-      babylonEngine = null;
-      babylonScene = null;
-    }
     const dataUrl = await sharpSplat.loadGlbPreview(filePath);
-    babylonEngine = new BABYLON.Engine(el.glbCanvas, true, { preserveDrawingBuffer: true, stencil: true });
-    babylonScene = new BABYLON.Scene(babylonEngine);
-    babylonScene.clearColor = new BABYLON.Color4(0.06, 0.065, 0.075, 1);
-    const camera = new BABYLON.ArcRotateCamera('camera', Math.PI / 2.4, Math.PI / 2.7, 2.4, BABYLON.Vector3.Zero(), babylonScene);
-    camera.attachControl(el.glbCanvas, true);
-    camera.wheelPrecision = 45;
-    new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0.3, 1, 0.4), babylonScene).intensity = 1.1;
-    const dir = new BABYLON.DirectionalLight('key', new BABYLON.Vector3(-0.6, -1, -0.8), babylonScene);
-    dir.intensity = 1.4;
-    await BABYLON.SceneLoader.AppendAsync('', dataUrl, babylonScene);
-    const meshes = babylonScene.meshes.filter((m) => m.getTotalVertices && m.getTotalVertices() > 0);
+    const { scene, camera } = createBabylonViewer(el.glbCanvas, 'glb');
+    await BABYLON.SceneLoader.AppendAsync('', dataUrl, scene);
+    const meshes = scene.meshes.filter((m) => m.getTotalVertices && m.getTotalVertices() > 0);
     if (meshes.length) {
-      babylonScene.executeWhenReady(() => babylonEngine && babylonEngine.resize());
-      const min = new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
-      const max = new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
-      for (const mesh of meshes) {
-        mesh.computeWorldMatrix(true);
-        const info = mesh.getBoundingInfo();
-        BABYLON.Vector3.MinimizeToRef(min, info.boundingBox.minimumWorld, min);
-        BABYLON.Vector3.MaximizeToRef(max, info.boundingBox.maximumWorld, max);
-      }
-      const center = min.add(max).scale(0.5);
-      const extent = max.subtract(min);
-      const radius = Math.max(0.8, extent.length() * 0.55);
-      camera.setTarget(center);
-
-      camera.lowerRadiusLimit = radius * 0.1;
-      camera.upperRadiusLimit = radius * 10;
-      camera.radius = radius * 1.7;
-      camera.minZ = Math.max(0.001, radius / 1000);
-      camera.maxZ = Math.max(1000, radius * 1000);
+      scene.executeWhenReady(() => babylonEngine && babylonEngine.resize());
+      fitBabylonCamera(camera, meshes);
     }
-    babylonEngine.runRenderLoop(() => babylonScene && babylonScene.render());
+    startBabylonRenderLoop();
     el.glbCanvas.addEventListener('dblclick', () => {
       if (meshes.length) {
         const glbMin = meshes.reduce((m, n) => BABYLON.Vector3.Minimize(m, n.getBoundingInfo().boundingBox.minimumWorld), new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY));
@@ -915,9 +984,6 @@ async function loadGlbViewer(filePath) {
       }
     });
     el.viewerInfo.textContent = 'GLB preview loaded · drag rotate · wheel zoom · double-click reset';
-    if (window._glbResizeHandler) window.removeEventListener('resize', window._glbResizeHandler);
-    window._glbResizeHandler = () => babylonEngine && babylonEngine.resize();
-    window.addEventListener('resize', window._glbResizeHandler);
   } catch (err) {
     el.viewerInfo.textContent = `GLB preview failed: ${err.message || err}`;
     appendError('GLB preview failed', err);
@@ -927,12 +993,7 @@ async function loadGlbViewer(filePath) {
 async function loadPlyViewer(filePath = state.outputPly) {
   if (!filePath) return;
   showOutputPanel('ply');
-  if (babylonEngine) {
-    babylonEngine.dispose();
-    babylonEngine = null;
-    babylonScene = null;
-  }
-  el.viewerInfo.textContent = 'Loading PLY…';
+  el.viewerInfo.textContent = 'Loading Gaussian splat PLY…';
   try {
     const ply = await sharpSplat.loadPlyPreview(filePath);
     state.viewer.positions = ply.positions;
@@ -940,21 +1001,35 @@ async function loadPlyViewer(filePath = state.outputPly) {
     state.viewer.bounds = ply.bounds;
     state.outputPly = filePath;
     el.viewerPlaceholder.classList.add('hidden');
-    el.viewerInfo.textContent = `${ply.shownCount.toLocaleString()} / ${ply.vertexCount.toLocaleString()} points shown`;
-    resetViewerCamera();
+    try {
+      const result = await importPlyWithBabylon(filePath, ply);
+      const meshes = result.meshes || babylonScene.meshes || [];
+      fitBabylonCamera(babylonCamera, meshes, ply);
+      startBabylonRenderLoop();
+      el.viewerInfo.textContent = `Gaussian splat preview loaded · ${ply.vertexCount.toLocaleString()} splats`;
+    } catch (babylonError) {
+      appendLog('Babylon Gaussian splat preview failed; using point fallback: ' + (babylonError.message || babylonError));
+      disposeBabylonViewer();
+      state.viewer.useBabylon = false;
+      el.viewerInfo.textContent = `${ply.shownCount.toLocaleString()} / ${ply.vertexCount.toLocaleString()} points shown (fallback)`;
+      resetViewerCamera();
+    }
   } catch (err) {
+    disposeBabylonViewer();
     el.viewerPlaceholder.classList.remove('hidden');
     el.viewerInfo.textContent = `PLY preview failed: ${err.message || err}`;
   }
 }
 
 el.plyCanvas.addEventListener('pointerdown', (event) => {
+  if (state.viewer.useBabylon) return;
   state.viewer.dragging = true;
   state.viewer.lastX = event.clientX;
   state.viewer.lastY = event.clientY;
   el.plyCanvas.setPointerCapture(event.pointerId);
 });
 el.plyCanvas.addEventListener('pointermove', (event) => {
+  if (state.viewer.useBabylon) return;
   if (!state.viewer.dragging) return;
   const dx = event.clientX - state.viewer.lastX;
   const dy = event.clientY - state.viewer.lastY;
@@ -966,18 +1041,49 @@ el.plyCanvas.addEventListener('pointermove', (event) => {
 });
 el.plyCanvas.addEventListener('pointerup', () => { state.viewer.dragging = false; });
 el.plyCanvas.addEventListener('wheel', (event) => {
+  if (state.viewer.useBabylon) return;
   event.preventDefault();
   state.viewer.zoom *= event.deltaY < 0 ? 1.12 : 0.89;
   state.viewer.zoom = Math.max(0.08, Math.min(80, state.viewer.zoom));
   drawPlyViewer();
 }, { passive: false });
-el.plyCanvas.addEventListener('dblclick', resetViewerCamera);
+el.plyCanvas.addEventListener('dblclick', () => {
+  if (state.viewer.useBabylon && babylonCamera) {
+    fitBabylonCamera(babylonCamera, babylonScene ? babylonScene.meshes : [], { bounds: state.viewer.bounds });
+    return;
+  }
+  resetViewerCamera();
+});
 window.addEventListener('resize', () => {
+  if (state.viewer.useBabylon) return;
   drawPlyViewer();
 });
 
+function panBabylonCamera(dx, dy) {
+  if (!babylonCamera) return;
+  const forward = babylonCamera.getTarget().subtract(babylonCamera.position).normalize();
+  const right = BABYLON.Vector3.Cross(forward, babylonCamera.upVector).normalize();
+  const up = BABYLON.Vector3.Cross(right, forward).normalize();
+  const amount = Math.max(0.01, babylonCamera.radius * 0.04);
+  const delta = right.scale(dx * amount).add(up.scale(dy * amount));
+  babylonCamera.setTarget(babylonCamera.getTarget().add(delta));
+}
+
 window.addEventListener('keydown', (event) => {
   if (!el.plyCanvas || el.plyCanvas.classList.contains('hidden')) return;
+  if (state.viewer.useBabylon && activeBabylonKind === 'ply' && babylonCamera) {
+    switch (event.key) {
+      case 'w': case 'W': panBabylonCamera(0, 1); break;
+      case 's': case 'S': panBabylonCamera(0, -1); break;
+      case 'a': case 'A': panBabylonCamera(-1, 0); break;
+      case 'd': case 'D': panBabylonCamera(1, 0); break;
+      case 'ArrowUp': babylonCamera.radius = Math.max(babylonCamera.lowerRadiusLimit || 0.01, babylonCamera.radius * 0.9); break;
+      case 'ArrowDown': babylonCamera.radius = Math.min(babylonCamera.upperRadiusLimit || Infinity, babylonCamera.radius * 1.1); break;
+      default: return;
+    }
+    event.preventDefault();
+    return;
+  }
   const PAN = 28;
   const ZOOM = 0.12;
   switch (event.key) {
