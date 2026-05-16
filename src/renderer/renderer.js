@@ -823,6 +823,14 @@ function resetViewerCamera() {
   drawPlyViewer();
 }
 
+function percentileRange(values, low = 0.01, high = 0.99) {
+  if (!values.length) return null;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const lowIndex = Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * low)));
+  const highIndex = Math.max(lowIndex, Math.min(sorted.length - 1, Math.ceil((sorted.length - 1) * high)));
+  return { min: sorted[lowIndex], max: sorted[highIndex] };
+}
+
 function drawPlyViewer() {
   const canvas = el.plyCanvas;
   const ctx = canvas.getContext('2d');
@@ -842,10 +850,8 @@ function drawPlyViewer() {
   const sinX = Math.sin(rotX), cosX = Math.cos(rotX);
   const sinY = Math.sin(rotY), cosY = Math.cos(rotY);
   const projected = [];
-  let minPX = Number.POSITIVE_INFINITY;
-  let minPY = Number.POSITIVE_INFINITY;
-  let maxPX = Number.NEGATIVE_INFINITY;
-  let maxPY = Number.NEGATIVE_INFINITY;
+  const projectedXs = [];
+  const projectedYs = [];
 
   for (let i = 0; i < positions.length; i += 3) {
     let x = positions[i] - cx;
@@ -855,10 +861,8 @@ function drawPlyViewer() {
     const z1 = -x * sinY + z * cosY;
     const y2 = y * cosX - z1 * sinX;
     const z2 = y * sinX + z1 * cosX;
-    minPX = Math.min(minPX, x1);
-    minPY = Math.min(minPY, y2);
-    maxPX = Math.max(maxPX, x1);
-    maxPY = Math.max(maxPY, y2);
+    projectedXs.push(x1);
+    projectedYs.push(y2);
     projected.push({
       x: x1,
       y: y2,
@@ -869,11 +873,14 @@ function drawPlyViewer() {
     });
   }
 
-  const projectedWidth = Math.max(maxPX - minPX, 1e-6);
-  const projectedHeight = Math.max(maxPY - minPY, 1e-6);
+  const xRange = percentileRange(projectedXs);
+  const yRange = percentileRange(projectedYs);
+  if (!xRange || !yRange) return;
+  const projectedWidth = Math.max(xRange.max - xRange.min, 1e-6);
+  const projectedHeight = Math.max(yRange.max - yRange.min, 1e-6);
   const scale = Math.min(width * 0.82 / projectedWidth, height * 0.82 / projectedHeight) * zoom;
-  const centerPX = (minPX + maxPX) * 0.5;
-  const centerPY = (minPY + maxPY) * 0.5;
+  const centerPX = (xRange.min + xRange.max) * 0.5;
+  const centerPY = (yRange.min + yRange.max) * 0.5;
   const pts = projected.map((pt) => ({
     ...pt,
     x: width * 0.5 + panX * dpr + (pt.x - centerPX) * scale,
@@ -904,7 +911,11 @@ function disposeBabylonViewer() {
 
 function createBabylonViewer(canvas, kind) {
   disposeBabylonViewer();
-  babylonEngine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+  babylonEngine = new BABYLON.Engine(canvas, true, {
+    preserveDrawingBuffer: true,
+    stencil: true,
+    doNotHandleContextLost: false,
+  });
   babylonScene = new BABYLON.Scene(babylonEngine);
   babylonScene.clearColor = new BABYLON.Color4(0.06, 0.065, 0.075, 1);
   babylonCamera = new BABYLON.ArcRotateCamera('camera', Math.PI / 2.4, Math.PI / 2.7, 2.4, BABYLON.Vector3.Zero(), babylonScene);
@@ -1054,6 +1065,7 @@ async function loadPlyViewer(filePath = state.outputPly) {
       el.plyCanvas.classList.remove('hidden');
       el.viewerInfo.textContent = `${ply.shownCount.toLocaleString()} / ${ply.vertexCount.toLocaleString()} points shown (fallback)`;
       resetViewerCamera();
+      requestAnimationFrame(drawPlyViewer);
     } catch (err2) {
       disposeBabylonViewer();
       el.viewerPlaceholder.classList.remove('hidden');
@@ -1114,12 +1126,12 @@ window.addEventListener('keydown', (event) => {
   if (!el.plyCanvas || el.plyCanvas.classList.contains('hidden')) return;
   if (state.viewer.useBabylon && activeBabylonKind === 'ply' && babylonCamera) {
     switch (event.key) {
-      case 'w': case 'W': panBabylonCamera(0, 1); break;
-      case 's': case 'S': panBabylonCamera(0, -1); break;
+      case 'w': case 'W': case 'ArrowUp': panBabylonCamera(0, -1); break;
+      case 's': case 'S': case 'ArrowDown': panBabylonCamera(0, 1); break;
       case 'a': case 'A': panBabylonCamera(-1, 0); break;
       case 'd': case 'D': panBabylonCamera(1, 0); break;
-      case 'ArrowUp': babylonCamera.radius = Math.max(babylonCamera.lowerRadiusLimit || 0.01, babylonCamera.radius * 0.9); break;
-      case 'ArrowDown': babylonCamera.radius = Math.min(babylonCamera.upperRadiusLimit || Infinity, babylonCamera.radius * 1.1); break;
+      case '+': case '=': babylonCamera.radius = Math.max(babylonCamera.lowerRadiusLimit || 0.01, babylonCamera.radius * 0.9); break;
+      case '-': case '_': babylonCamera.radius = Math.min(babylonCamera.upperRadiusLimit || Infinity, babylonCamera.radius * 1.1); break;
       default: return;
     }
     event.preventDefault();
@@ -1128,12 +1140,12 @@ window.addEventListener('keydown', (event) => {
   const PAN = 28;
   const ZOOM = 0.12;
   switch (event.key) {
-    case 'w': case 'W': state.viewer.panY -= PAN; break;
-    case 's': case 'S': state.viewer.panY += PAN; break;
+    case 'w': case 'W': case 'ArrowUp': state.viewer.panY += PAN; break;
+    case 's': case 'S': case 'ArrowDown': state.viewer.panY -= PAN; break;
     case 'a': case 'A': state.viewer.panX -= PAN; break;
     case 'd': case 'D': state.viewer.panX += PAN; break;
-    case 'ArrowUp': state.viewer.zoom *= 1 + ZOOM; break;
-    case 'ArrowDown': state.viewer.zoom *= 1 - ZOOM; break;
+    case '+': case '=': state.viewer.zoom *= 1 + ZOOM; break;
+    case '-': case '_': state.viewer.zoom *= 1 - ZOOM; break;
     default: return;
   }
   event.preventDefault();

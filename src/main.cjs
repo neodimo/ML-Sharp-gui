@@ -14,6 +14,11 @@ let mainWindow;
 let activeProcess = null;
 let updateDownloaded = false;
 
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-webgl');
+app.commandLine.appendSwitch('enable-accelerated-2d-canvas');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1120,
@@ -25,6 +30,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
+      webgl: true,
     },
   });
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
