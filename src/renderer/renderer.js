@@ -11,6 +11,7 @@ const state = {
   busy: false,
   activeMode: 'sharp',
   inputIsPanorama: false,
+  stageLayout: { generateMinimized: false, previewMinimized: false, dragging: false },
   progressMode: 'idle',
   downloads: { active: false, startedAt: 0, totalBytes: 0, doneBytes: 0, files: new Map(), doneFiles: 0 },
   longPhase: { active: false, label: '', startedAt: 0 },
@@ -47,6 +48,10 @@ const el = {
   sharpModePanel: $('sharpModePanel'),
   panoramaModePanel: $('panoramaModePanel'),
   pixalModePanel: $('pixalModePanel'),
+  centerStage: document.querySelector('.centerStage'),
+  toggleGeneratePanel: $('toggleGeneratePanel'),
+  stageSplitter: $('stageSplitter'),
+  togglePreviewPanel: $('togglePreviewPanel'),
   modeSummary: $('modeSummary'),
   resultPanel: $('resultPanel'),
   viewerTitle: $('viewerTitle'),
@@ -347,6 +352,33 @@ function showOutputPanel(kind) {
   el.viewerPlaceholder.classList.add('hidden');
   el.viewerTitle.textContent = isGlb ? 'Pixal3D GLB preview' : 'SHARP PLY preview';
   el.viewPly.classList.toggle('hidden', isGlb);
+  requestAnimationFrame(drawPlyViewer);
+}
+
+function updateStageLayout() {
+  el.centerStage.classList.toggle('generateMinimized', state.stageLayout.generateMinimized);
+  el.centerStage.classList.toggle('previewMinimized', state.stageLayout.previewMinimized);
+  el.toggleGeneratePanel.textContent = state.stageLayout.generateMinimized ? '⌄' : '⌃';
+  el.toggleGeneratePanel.title = state.stageLayout.generateMinimized ? 'Restore Generate' : 'Minimize Generate';
+  el.toggleGeneratePanel.setAttribute('aria-label', el.toggleGeneratePanel.title);
+  el.togglePreviewPanel.textContent = state.stageLayout.previewMinimized ? '⌃' : '⌄';
+  el.togglePreviewPanel.title = state.stageLayout.previewMinimized ? 'Restore Preview' : 'Maximize Preview';
+  el.togglePreviewPanel.setAttribute('aria-label', el.togglePreviewPanel.title);
+  requestAnimationFrame(drawPlyViewer);
+}
+
+function setStageSplitFromPointer(clientY) {
+  const rect = el.centerStage.getBoundingClientRect();
+  const available = rect.height - el.stageSplitter.offsetHeight;
+  if (available <= 0) return;
+  const generatePx = Math.max(150, Math.min(available - 360, clientY - rect.top));
+  const previewPx = Math.max(360, available - generatePx);
+  const total = generatePx + previewPx;
+  el.centerStage.style.setProperty('--generate-fr', `${generatePx / total}fr`);
+  el.centerStage.style.setProperty('--preview-fr', `${previewPx / total}fr`);
+  state.stageLayout.generateMinimized = false;
+  state.stageLayout.previewMinimized = false;
+  updateStageLayout();
 }
 
 function readOptions() {
@@ -785,6 +817,36 @@ el.openFolder.addEventListener('click', () => {
   if (state.outputFolder) sharpSplat.openPath(state.outputFolder);
 });
 el.viewPly.addEventListener('click', () => loadPlyViewer());
+el.toggleGeneratePanel.addEventListener('click', () => {
+  state.stageLayout.generateMinimized = !state.stageLayout.generateMinimized;
+  if (state.stageLayout.generateMinimized) state.stageLayout.previewMinimized = false;
+  updateStageLayout();
+});
+el.togglePreviewPanel.addEventListener('click', () => {
+  state.stageLayout.previewMinimized = !state.stageLayout.previewMinimized;
+  if (state.stageLayout.previewMinimized) state.stageLayout.generateMinimized = false;
+  updateStageLayout();
+});
+el.stageSplitter.addEventListener('pointerdown', (event) => {
+  state.stageLayout.dragging = true;
+  el.stageSplitter.classList.add('dragging');
+  el.stageSplitter.setPointerCapture(event.pointerId);
+});
+el.stageSplitter.addEventListener('pointermove', (event) => {
+  if (!state.stageLayout.dragging) return;
+  setStageSplitFromPointer(event.clientY);
+});
+el.stageSplitter.addEventListener('pointerup', () => {
+  state.stageLayout.dragging = false;
+  el.stageSplitter.classList.remove('dragging');
+});
+el.stageSplitter.addEventListener('dblclick', () => {
+  el.centerStage.style.removeProperty('--generate-fr');
+  el.centerStage.style.removeProperty('--preview-fr');
+  state.stageLayout.generateMinimized = false;
+  state.stageLayout.previewMinimized = false;
+  updateStageLayout();
+});
 
 
 function resizeCanvasToDisplaySize() {
@@ -831,6 +893,13 @@ function percentileRange(values, low = 0.01, high = 0.99) {
   return { min: sorted[lowIndex], max: sorted[highIndex] };
 }
 
+function median(values) {
+  if (!values.length) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) * 0.5;
+}
+
 function drawPlyViewer() {
   const canvas = el.plyCanvas;
   const ctx = canvas.getContext('2d');
@@ -873,14 +942,14 @@ function drawPlyViewer() {
     });
   }
 
-  const xRange = percentileRange(projectedXs);
-  const yRange = percentileRange(projectedYs);
+  const xRange = percentileRange(projectedXs, 0.02, 0.98);
+  const yRange = percentileRange(projectedYs, 0.02, 0.98);
   if (!xRange || !yRange) return;
   const projectedWidth = Math.max(xRange.max - xRange.min, 1e-6);
   const projectedHeight = Math.max(yRange.max - yRange.min, 1e-6);
   const scale = Math.min(width * 0.82 / projectedWidth, height * 0.82 / projectedHeight) * zoom;
-  const centerPX = (xRange.min + xRange.max) * 0.5;
-  const centerPY = (yRange.min + yRange.max) * 0.5;
+  const centerPX = median(projectedXs.filter((value) => value >= xRange.min && value <= xRange.max));
+  const centerPY = median(projectedYs.filter((value) => value >= yRange.min && value <= yRange.max));
   const pts = projected.map((pt) => ({
     ...pt,
     x: width * 0.5 + panX * dpr + (pt.x - centerPX) * scale,
@@ -910,6 +979,9 @@ function disposeBabylonViewer() {
 }
 
 function createBabylonViewer(canvas, kind) {
+  if (!canvas.getContext('webgl2') && !canvas.getContext('webgl')) {
+    throw new Error('Electron WebGL context is unavailable; using built-in point preview.');
+  }
   disposeBabylonViewer();
   babylonEngine = new BABYLON.Engine(canvas, true, {
     preserveDrawingBuffer: true,
@@ -1160,4 +1232,5 @@ setProgress('idle');
 restoreOutputFolder();
 checkRuntime(false);
 loadAppInfo();
+updateStageLayout();
 drawPlyViewer();

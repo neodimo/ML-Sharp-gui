@@ -12,7 +12,7 @@
         <div class="brandMark">S</div>
         <div>
           <p class="eyebrow">Single image → 3D asset</p>
-          <h1>2D to 3D <span id="appVersion" class="appVersion">v0.4.18</span></h1>
+          <h1>2D to 3D <span id="appVersion" class="appVersion">v0.4.19</span></h1>
         </div>
       </div>
       <div class="headerActions">
@@ -98,14 +98,18 @@
       </section>
 
       <section class="centerStage">
-        <article class="panel heroPanel">
+        <article id="generatePanel" class="panel heroPanel">
           <div class="sectionHead">
             <div>
               <p class="eyebrow">Generate</p>
               <h2>Choose output type</h2>
             </div>
-            <span id="modeSummary" class="metaText">SHARP .PLY selected</span>
+            <div class="sectionActions">
+              <span id="modeSummary" class="metaText">SHARP .PLY selected</span>
+              <button id="toggleGeneratePanel" class="iconButton" type="button" title="Minimize Generate" aria-label="Minimize Generate">⌃</button>
+            </div>
           </div>
+          <div class="panelBody">
 
           <div class="modeTabs" role="tablist" aria-label="Output type">
             <button id="sharpModeButton" class="modeTab active" type="button">SHARP .PLY</button>
@@ -170,7 +174,10 @@
             </div>
             <pre id="liveLog"></pre>
           </div>
+          </div>
         </article>
+
+        <div id="stageSplitter" class="stageSplitter" role="separator" aria-orientation="horizontal" tabindex="0" title="Drag to resize Generate and Preview"></div>
 
         <article id="resultPanel" class="panel resultPanel hidden">
           <div class="sectionHead">
@@ -178,8 +185,12 @@
               <p class="eyebrow">Preview</p>
               <h2 id="viewerTitle">Output asset</h2>
             </div>
-            <span id="viewerInfo" class="metaText">No output yet</span>
+            <div class="sectionActions">
+              <span id="viewerInfo" class="metaText">No output yet</span>
+              <button id="togglePreviewPanel" class="iconButton" type="button" title="Maximize Preview" aria-label="Maximize Preview">⌄</button>
+            </div>
           </div>
+          <div class="panelBody">
           <div class="viewerShell">
             <canvas id="plyCanvas" class="hidden" width="900" height="420"></canvas>
             <canvas id="glbCanvas" class="hidden"></canvas>
@@ -190,6 +201,7 @@
             <button id="viewPly" class="ghost hidden">Reload .PLY</button>
             <button id="showPly" class="primary">Show output</button>
             <button id="openFolder" class="ghost">Open folder</button>
+          </div>
           </div>
         </article>
       </section>

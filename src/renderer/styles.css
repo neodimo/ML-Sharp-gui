@@ -50,9 +50,15 @@ li + li { margin-top: 0.35rem; }
 
 .workbench { height: calc(100vh - 78px); min-height: 0; overflow: hidden; display: grid; grid-template-columns: minmax(300px, 360px) minmax(560px, 1fr); gap: 0.9rem; padding: 0.9rem 1.25rem 1.15rem; }
 .leftRail, .centerStage { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 0.9rem; }
-.centerStage { display: grid; grid-template-rows: auto minmax(280px, 1fr); overflow: auto; }
+.centerStage { --generate-fr: 0.44fr; --preview-fr: 1.56fr; display: grid; grid-template-rows: minmax(150px, var(--generate-fr)) 10px minmax(360px, var(--preview-fr)); overflow: hidden; }
+.centerStage.generateMinimized { grid-template-rows: auto 10px minmax(520px, 1fr); }
+.centerStage.previewMinimized { grid-template-rows: minmax(360px, 1fr) 10px auto; }
+.centerStage.generateMinimized .heroPanel .panelBody,
+.centerStage.previewMinimized .resultPanel .panelBody { display: none; }
 .panel { border: 1px solid var(--line); border-radius: 22px; background: var(--panel); box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22); }
 .sectionHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 0.95rem 1rem 0.8rem; }
+.sectionActions { display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; min-width: 0; }
+.iconButton { width: 2rem; height: 2rem; display: grid; place-items: center; padding: 0; border-radius: 999px; font-size: 1rem; line-height: 1; }
 .metaText { color: var(--muted); font-size: 0.78rem; text-align: right; line-height: 1.25; }
 .row { display: flex; gap: 0.52rem; align-items: center; }
 .grid { display: grid; gap: 0.7rem; }
@@ -73,7 +79,8 @@ li + li { margin-top: 0.35rem; }
 .advancedPanel[open] { overflow: auto; }
 .advancedPanel[open] summary { margin-bottom: 0.8rem; }
 
-.heroPanel { padding-bottom: 0.95rem; min-height: 0; }
+.heroPanel { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.heroPanel .panelBody { min-height: 0; overflow: auto; padding-bottom: 0.95rem; }
 .modeTabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.65rem; padding: 0 1rem 0.8rem; }
 .modeTab { border-radius: 16px; padding: 0.88rem; font-weight: 850; background: #242529; color: var(--soft); }
 .modeTab.active { background: var(--accent); border-color: var(--accent); color: #18191b; }
@@ -101,7 +108,10 @@ li + li { margin-top: 0.35rem; }
 .liveLogHead { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; padding: 0.48rem 0.66rem; color: #f1e8dc; font-size: 0.76rem; font-weight: 850; border-bottom: 1px solid var(--line-soft); }
 #liveLog { height: 118px; margin: 0; padding: 0.62rem 0.72rem; overflow: hidden; color: #e6ded3; font-family: "Cascadia Mono", "Consolas", ui-monospace, SFMono-Regular, monospace; font-size: 0.72rem; line-height: 1.34; white-space: pre-wrap; }
 
-.resultPanel { min-height: 280px; display: flex; flex-direction: column; overflow: hidden; }
+.stageSplitter { align-self: stretch; cursor: row-resize; border-radius: 999px; background: linear-gradient(90deg, transparent, rgba(238, 126, 48, 0.52), transparent); opacity: 0.72; }
+.stageSplitter:hover, .stageSplitter.dragging { opacity: 1; background: linear-gradient(90deg, transparent, rgba(238, 126, 48, 0.85), transparent); }
+.resultPanel { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.resultPanel .panelBody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .viewerShell { flex: 1; min-height: 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
 #plyCanvas, #glbCanvas { width: 100%; height: 100%; display: block; }
 #plyCanvas { cursor: grab; }
@@ -117,6 +127,7 @@ li + li { margin-top: 0.35rem; }
   .workbench { height: auto; overflow: visible; grid-template-columns: 1fr; }
   .leftRail, .centerStage { overflow: visible; }
   .centerStage { display: flex; flex-direction: column; }
+  .stageSplitter { display: none; }
   .inputCard { display: flex; flex-direction: column; overflow: visible; }
   .inputPreviewShell { min-height: 260px; height: auto; }
   .inputPreviewShell.hasPreview { min-height: 0; }
