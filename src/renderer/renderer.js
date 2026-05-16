@@ -1011,52 +1011,38 @@ async function loadPlyViewer(filePath = state.outputPly) {
   el.viewerInfo.textContent = 'Loading Gaussian splat PLY…';
   try {
     if (babylonEngine) { babylonEngine.dispose(); babylonEngine = null; babylonScene = null; }
-    const dataUrl = await sharpSplat.loadPlyPreviewAsDataUrl(filePath);
-    babylonEngine = new BABYLON.Engine(el.plyCanvas, true, { preserveDrawingBuffer: true, stencil: true });
-    babylonScene = new BABYLON.Scene(babylonEngine, { preserveOldSceneWhenLoadingFromDataUrl: false });
-    babylonScene.clearColor = new BABYLON.Color4(0.03, 0.035, 0.05, 1);
-    const camera = new BABYLON.ArcRotateCamera('gsCam', Math.PI * 0.55, Math.PI * 0.42, 0.4, BABYLON.Vector3.Zero(), babylonScene);
-    camera.lowerRadiusLimit = 0.001;
-    camera.upperRadiusLimit = 10;
-    camera.wheelPrecision = 120;
-    camera.attachControl(el.plyCanvas, true);
-    new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0.2, 1, 0.3), babylonScene).intensity = 1.0;
-    const dir = new BABYLON.DirectionalLight('key', new BABYLON.Vector3(-0.5, -1, -0.6), babylonScene);
-    dir.intensity = 1.3;
-    await BABYLON.SceneLoader.AppendAsync('', dataUrl, babylonScene);
-    state.viewer.gsSceneRoot = babylonScene;
-    state.viewer.gsCamera = camera;
-    applyYFlip(babylonScene, true);
+    // Try the direct bytes path via importPlyWithBabylon — works without SceneLoader.AppendAsync
+    const result = await importPlyWithBabylon(filePath, {});
+    babylonScene = result.scene;
+    const camera = result.camera;
+    babylonEngine = result.engine;
+    fitBabylonCamera(camera, result.meshes || babylonScene.meshes || [], { bounds: state.viewer.bounds });
+    startBabylonRenderLoop();
+    state.viewer.useBabylon = true;
     state.outputPly = filePath;
     el.viewerPlaceholder.classList.add('hidden');
-    el.viewerInfo.textContent = 'Gaussian splat loaded · drag rotate · scroll zoom · double-click reset';
-    babylonEngine.runRenderLoop(() => babylonScene && babylonScene.render());
-    window.addEventListener('resize', () => babylonEngine && babylonEngine.resize());
-    el.plyCanvas.addEventListener('dblclick', () => { resetGsCamera(babylonScene, camera); });
+    el.viewerInfo.textContent = `Gaussian splat preview loaded · ${result.meshes ? result.meshes.length : ''} splats · drag rotate · scroll zoom · double-click reset`;
+    applyYFlip(babylonScene, true);
   } catch (err) {
-    appendLog('Babylon splat load failed, trying bytes path: ' + (err.message || err));
+    appendLog('Babylon Gaussian splat preview failed; using point fallback: ' + (err.message || err));
     try {
-      const result = await importPlyWithBabylon(filePath, { fileUrl: dataUrl });
-      const meshes = result.meshes || babylonScene.meshes || [];
-      fitBabylonCamera(camera, meshes, { bounds: state.viewer.bounds });
-      startBabylonRenderLoop();
-      state.viewer.useBabylon = true;
-      el.viewerInfo.textContent = `Gaussian splat preview loaded · ${result.meshes ? result.meshes.length : ''} splats`;
-      applyYFlip(babylonScene, true);
-    } catch (babylonError) {
-      appendLog('Babylon Gaussian splat preview failed; using point fallback: ' + (babylonError.message || babylonError));
       disposeBabylonViewer();
       const ply = await sharpSplat.loadPlyPreview(filePath);
       state.viewer.positions = ply.positions;
       state.viewer.colors = ply.colors;
       state.viewer.bounds = ply.bounds;
       state.outputPly = filePath;
+      state.viewer.useBabylon = false;
       state.viewer.gsSceneRoot = null;
       state.viewer.gsCamera = null;
       el.viewerPlaceholder.classList.add('hidden');
       el.plyCanvas.classList.remove('hidden');
       el.viewerInfo.textContent = `${ply.shownCount.toLocaleString()} / ${ply.vertexCount.toLocaleString()} points shown (fallback)`;
       resetViewerCamera();
+    } catch (err2) {
+      disposeBabylonViewer();
+      el.viewerPlaceholder.classList.remove('hidden');
+      el.viewerInfo.textContent = `PLY preview failed: ${err2.message || err2}`;
     }
   }
 }
