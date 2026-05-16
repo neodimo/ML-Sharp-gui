@@ -1325,6 +1325,11 @@ ipcMain.handle('open-path', async (_event, filePath) => {
 });
 
 ipcMain.handle('load-ply-preview', async (_event, filePath) => loadPlyPreview(filePath));
+ipcMain.handle('load-ply-preview-as-data-url', async (_event, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) throw new Error('PLY file does not exist.');
+  const buffer = fs.readFileSync(filePath);
+  return `data:model/ply;base64,${buffer.toString('base64')}`;
+});
 
 ipcMain.handle('load-ply-bytes', async (_event, filePath) => {
   if (!filePath || !fs.existsSync(filePath)) throw new Error('PLY file does not exist.');
