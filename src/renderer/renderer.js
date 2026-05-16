@@ -61,6 +61,7 @@ const el = {
   liveLog: $('liveLog'),
   copyLogButton: $('copyLogButton'),
   runtimeInfo: $('runtimeInfo'),
+  appVersion: $('appVersion'),
   pixalAccept: $('pixalAccept'),
   pixalRunButton: $('pixalRunButton'),
   pixalStatus: $('pixalStatus'),
@@ -120,6 +121,15 @@ function appendError(label, err) {
   appendLog(message);
   appendLog('');
   return message;
+}
+
+async function loadAppInfo() {
+  try {
+    const info = await sharpSplat.getAppInfo();
+    if (info && info.version) el.appVersion.textContent = `v${info.version}`;
+  } catch (err) {
+    appendLog(`Could not read app version: ${err.message || err}`);
+  }
 }
 
 async function copyLog() {
@@ -408,7 +418,7 @@ async function checkForUpdates() {
 
 async function restartAndInstallUpdate() {
   el.restartUpdateButton.disabled = true;
-  el.updateStatus.textContent = 'Restarting to apply update…';
+  el.updateStatus.textContent = 'Applying update silently… the app will restart.';
   try {
     await sharpSplat.restartAndInstallUpdate();
   } catch (err) {
@@ -580,6 +590,7 @@ sharpSplat.onUpdateState((update) => {
   }
   if (update.status === 'downloaded') {
     el.restartUpdateButton.classList.remove('hidden');
+    el.restartUpdateButton.textContent = 'Apply update';
     el.updateButton.disabled = false;
   }
   if (update.status === 'none' || update.status === 'error') el.updateButton.disabled = false;
@@ -776,4 +787,5 @@ el.inputPreview.classList.add('hidden');
 setMode('sharp');
 setProgress('idle');
 checkRuntime(false);
+loadAppInfo();
 drawPlyViewer();

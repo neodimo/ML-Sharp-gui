@@ -44,6 +44,7 @@ li + li { margin-top: 0.35rem; }
 .brandBlock { display: flex; align-items: center; gap: 0.8rem; min-width: 0; }
 .brandMark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 14px; background: #242529; border: 1px solid rgba(238, 126, 48, 0.45); color: var(--accent); font-weight: 900; }
 .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.68rem; font-weight: 800; margin-bottom: 0.24rem; }
+.appVersion { color: #d5c7b5; font-size: 0.76rem; font-weight: 800; vertical-align: middle; }
 .headerActions { display: flex; justify-content: flex-end; align-items: center; gap: 0.48rem; }
 .pill { border: 1px solid rgba(238, 126, 48, 0.30); background: var(--accent-soft); color: #ffc394; border-radius: 999px; padding: 0.42rem 0.64rem; font-size: 0.78rem; font-weight: 800; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

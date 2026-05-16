@@ -43,7 +43,7 @@ function setupAutoUpdater() {
   }));
   autoUpdater.on('update-downloaded', (info) => {
     updateDownloaded = true;
-    sendUpdateState({ status: 'downloaded', message: 'Update ready. Restart the app to finish.', info });
+    sendUpdateState({ status: 'downloaded', message: 'Update ready. Apply it from here to finish.', info });
   });
   autoUpdater.on('error', (err) => sendUpdateState({ status: 'error', message: err.message || String(err) }));
 }
@@ -717,6 +717,12 @@ function colorFromProperties(values) {
   return [shade, shade, shade];
 }
 
+function orientPreviewPoint(x, y, z) {
+  // SHARP/PlayCanvas output lands upside down in this lightweight preview.
+  // Rotate around X so vertical orientation is corrected without mirroring left/right.
+  return { x, y: -y, z: -z };
+}
+
 function loadPlyPreview(filePath, maxPoints = 140000) {
   if (!filePath || !fs.existsSync(filePath)) throw new Error('PLY file does not exist.');
   const buffer = fs.readFileSync(filePath);
@@ -738,8 +744,9 @@ function loadPlyPreview(filePath, maxPoints = 140000) {
       if (fields.length < header.props.length) continue;
       const values = {};
       header.props.forEach((prop, idx) => { values[prop.name] = fields[idx]; });
-      const x = Number(values.x), y = Number(values.y), z = Number(values.z);
-      if (![x, y, z].every(Number.isFinite)) continue;
+      const rawX = Number(values.x), rawY = Number(values.y), rawZ = Number(values.z);
+      if (![rawX, rawY, rawZ].every(Number.isFinite)) continue;
+      const { x, y, z } = orientPreviewPoint(rawX, rawY, rawZ);
       const p = written * 3;
       positions[p] = x; positions[p + 1] = y; positions[p + 2] = z;
       colors.set(colorFromProperties(values), p);
@@ -757,8 +764,9 @@ function loadPlyPreview(filePath, maxPoints = 140000) {
         values[prop.name] = readProperty(buffer, offset, prop.type, littleEndian);
         offset += prop.size;
       }
-      const x = Number(values.x), y = Number(values.y), z = Number(values.z);
-      if (![x, y, z].every(Number.isFinite)) continue;
+      const rawX = Number(values.x), rawY = Number(values.y), rawZ = Number(values.z);
+      if (![rawX, rawY, rawZ].every(Number.isFinite)) continue;
+      const { x, y, z } = orientPreviewPoint(rawX, rawY, rawZ);
       const p = written * 3;
       positions[p] = x; positions[p + 1] = y; positions[p + 2] = z;
       colors.set(colorFromProperties(values), p);
@@ -799,9 +807,15 @@ ipcMain.handle('download-update', async () => {
 
 ipcMain.handle('restart-and-install-update', async () => {
   if (!updateDownloaded) return { ok: false, message: 'No downloaded update is ready yet.' };
-  autoUpdater.quitAndInstall(false, true);
+  autoUpdater.quitAndInstall(true, true);
   return { ok: true };
 });
+
+ipcMain.handle('get-app-info', async () => ({
+  name: app.getName(),
+  version: app.getVersion(),
+  packaged: app.isPackaged,
+}));
 
 ipcMain.handle('select-input', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
