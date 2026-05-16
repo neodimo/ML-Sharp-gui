@@ -18,6 +18,21 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-webgl');
 app.commandLine.appendSwitch('enable-accelerated-2d-canvas');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('use-gl', 'angle');
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('use-angle', 'd3d11');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+}
+
+function clearGpuCacheIfNeeded() {
+  try {
+    const gpuCache = path.join(app.getPath('userData'), 'GPUCache');
+    fs.rmSync(gpuCache, { recursive: true, force: true });
+    sendLog('Cleared Electron GPU cache before WebGL initialization.');
+  } catch (err) {
+    sendLog(`Could not clear Electron GPU cache: ${err.message || err}`);
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -57,6 +72,7 @@ function setupAutoUpdater() {
 
 app.whenReady().then(() => {
   setupAutoUpdater();
+  clearGpuCacheIfNeeded();
   createWindow();
 });
 app.on('window-all-closed', () => {
@@ -1197,6 +1213,28 @@ ipcMain.handle('get-app-info', async () => ({
   version: app.getVersion(),
   packaged: app.isPackaged,
 }));
+
+ipcMain.handle('get-gpu-diagnostics', async () => {
+  const diagnostics = {
+    platform: process.platform,
+    chrome: process.versions.chrome,
+    electron: process.versions.electron,
+    featureStatus: app.getGPUFeatureStatus(),
+    commandLine: {
+      ignoreGpuBlocklist: true,
+      enableWebgl: true,
+      useGl: 'angle',
+      useAngle: process.platform === 'win32' ? 'd3d11' : null,
+      disableGpuSandbox: process.platform === 'win32',
+    },
+  };
+  try {
+    diagnostics.basicInfo = await app.getGPUInfo('basic');
+  } catch (err) {
+    diagnostics.gpuInfoError = err.message || String(err);
+  }
+  return diagnostics;
+});
 
 ipcMain.handle('select-input', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {

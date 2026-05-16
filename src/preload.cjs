@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('sharpSplat', {
   loadPlyBytes: (filePath) => ipcRenderer.invoke('load-ply-bytes', filePath),
   loadGlbPreview: (filePath) => ipcRenderer.invoke('load-glb-preview', filePath),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  getGpuDiagnostics: () => ipcRenderer.invoke('get-gpu-diagnostics'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   restartAndInstallUpdate: () => ipcRenderer.invoke('restart-and-install-update'),

@@ -154,6 +154,53 @@ async function loadAppInfo() {
   }
 }
 
+function summarizeGpuDiagnostics(diagnostics) {
+  if (!diagnostics) return 'No Electron GPU diagnostics returned.';
+  const status = diagnostics.featureStatus || {};
+  const lines = [
+    `Electron GPU: chrome=${diagnostics.chrome || 'unknown'} electron=${diagnostics.electron || 'unknown'} platform=${diagnostics.platform || 'unknown'}`,
+    `Electron GPU flags: use-gl=${diagnostics.commandLine && diagnostics.commandLine.useGl}, use-angle=${diagnostics.commandLine && diagnostics.commandLine.useAngle}, disable-gpu-sandbox=${!!(diagnostics.commandLine && diagnostics.commandLine.disableGpuSandbox)}`,
+    `Electron GPU feature status: webgl=${status.webgl || 'unknown'}, webgl2=${status.webgl2 || 'unknown'}, gpu_compositing=${status.gpu_compositing || 'unknown'}, rasterization=${status.rasterization || 'unknown'}`,
+  ];
+  const devices = diagnostics.basicInfo && diagnostics.basicInfo.gpuDevice;
+  if (Array.isArray(devices) && devices.length) {
+    lines.push(`Electron GPU devices: ${devices.map((device) => [device.vendorString || device.vendorId, device.deviceString || device.deviceId].filter(Boolean).join(' ')).join(' | ')}`);
+  }
+  if (diagnostics.gpuInfoError) lines.push(`Electron GPU info error: ${diagnostics.gpuInfoError}`);
+  return lines.join('\n');
+}
+
+async function logGpuDiagnostics() {
+  try {
+    appendLog(summarizeGpuDiagnostics(await sharpSplat.getGpuDiagnostics()));
+  } catch (err) {
+    appendLog(`Electron GPU diagnostics failed: ${err.message || err}`);
+  }
+}
+
+function checkWebGlContext(canvas = document.createElement('canvas')) {
+  const attrs = {
+    alpha: false,
+    antialias: true,
+    depth: true,
+    stencil: true,
+    preserveDrawingBuffer: true,
+    failIfMajorPerformanceCaveat: false,
+  };
+  const gl = canvas.getContext('webgl2', attrs) || canvas.getContext('webgl', attrs) || canvas.getContext('experimental-webgl', attrs);
+  if (!gl) return { ok: false, message: 'Electron could not create a WebGL context.' };
+  const info = { ok: true, version: gl.getParameter(gl.VERSION), shadingLanguage: gl.getParameter(gl.SHADING_LANGUAGE_VERSION) };
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  if (ext) {
+    info.vendor = gl.getParameter(ext.UNMASKED_VENDOR_WEBGL);
+    info.renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+  } else {
+    info.vendor = gl.getParameter(gl.VENDOR);
+    info.renderer = gl.getParameter(gl.RENDERER);
+  }
+  return info;
+}
+
 async function copyLog() {
   flushLog();
   const text = el.log.textContent || '';
@@ -979,9 +1026,11 @@ function disposeBabylonViewer() {
 }
 
 function createBabylonViewer(canvas, kind) {
-  if (!canvas.getContext('webgl2') && !canvas.getContext('webgl')) {
-    throw new Error('Electron WebGL context is unavailable; using built-in point preview.');
+  const webgl = checkWebGlContext(canvas);
+  if (!webgl.ok) {
+    throw new Error(`${webgl.message} Electron is forced to ANGLE/D3D11 in this build; see GPU diagnostics above.`);
   }
+  appendLog(`Electron WebGL context OK: ${webgl.renderer || webgl.version || 'renderer unknown'}`);
   disposeBabylonViewer();
   babylonEngine = new BABYLON.Engine(canvas, true, {
     preserveDrawingBuffer: true,
@@ -1123,6 +1172,7 @@ async function loadPlyViewer(filePath = state.outputPly) {
     applyYFlip(babylonScene, true);
   } catch (err) {
     appendLog('Babylon Gaussian splat preview failed; using point fallback: ' + (err.message || err));
+    await logGpuDiagnostics();
     try {
       disposeBabylonViewer();
       const ply = await sharpSplat.loadPlyPreview(filePath);
@@ -1232,5 +1282,6 @@ setProgress('idle');
 restoreOutputFolder();
 checkRuntime(false);
 loadAppInfo();
+logGpuDiagnostics();
 updateStageLayout();
 drawPlyViewer();
