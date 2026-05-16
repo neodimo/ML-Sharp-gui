@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ML-Sharp Studio</title>
+    <title>2D to 3D</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -12,13 +12,18 @@
         <div class="brandMark">S</div>
         <div>
           <p class="eyebrow">Single image → 3D asset</p>
-          <h1>ML-Sharp Studio <span id="appVersion" class="appVersion">v0.4.16</span></h1>
+          <h1>2D to 3D <span id="appVersion" class="appVersion">v0.4.17</span></h1>
         </div>
       </div>
       <div class="headerActions">
         <span id="runtimeInfo" class="pill">Ready when you are</span>
         <button id="updateButton" class="ghost small">Update</button>
         <button id="restartUpdateButton" class="primary small hidden">Apply update</button>
+        <div id="updateProgressBlock" class="updateProgressBlock hidden" aria-label="Update download progress">
+          <div id="updateProgressBar" class="updateProgressBar"></div>
+          <span id="updateProgressLabel" class="updateProgressLabel">0%</span>
+        </div>
+        <span id="updateStatus" class="status subtle compactStatus">Click Update to check.</span>
       </div>
     </header>
 
@@ -104,12 +109,38 @@
 
           <div class="modeTabs" role="tablist" aria-label="Output type">
             <button id="sharpModeButton" class="modeTab active" type="button">SHARP .PLY</button>
+            <button id="panoramaModeButton" class="modeTab hidden" type="button">360 .PLY</button>
             <button id="pixalModeButton" class="modeTab" type="button">Pixal3D .GLB</button>
           </div>
 
           <section id="sharpModePanel" class="modePanel">
             <p>Apple SHARP creates a Gaussian splat <code>.ply</code>. The app installs/checks its runtime automatically when you run it.</p>
             <button id="runButton" class="primary runPrimary">Run SHARP</button>
+          </section>
+
+          <section id="panoramaModePanel" class="modePanel hidden">
+            <p>Stitched 2:1 panorama → extracted SHARP views → aligned merged 360 Gaussian splat <code>.ply</code>.</p>
+            <div class="grid two optionGrid">
+              <div>
+                <label>Views</label>
+                <select id="panoramaSideCount">
+                  <option value="4">4 views</option>
+                  <option value="6">6 views</option>
+                  <option value="8">8 views</option>
+                </select>
+              </div>
+              <div>
+                <label>Alignment</label>
+                <select id="panoramaAlignmentMode">
+                  <option value="overlap">Overlap</option>
+                  <option value="infinidepth">InfiniDepth</option>
+                  <option value="da360">DA360</option>
+                </select>
+              </div>
+            </div>
+            <label class="checkRow"><input id="panoramaKeepIntermediates" type="checkbox" /> Keep extracted faces and per-view splats.</label>
+            <button id="panoramaRunButton" class="primary runPrimary">Run 360 SHARP</button>
+            <p id="panoramaStatus" class="status subtle">Backend is checked automatically when you run.</p>
           </section>
 
           <section id="pixalModePanel" class="modePanel hidden">
@@ -139,7 +170,6 @@
             </div>
             <pre id="liveLog"></pre>
           </div>
-          <p id="updateStatus" class="status subtle compactStatus">Updates are available in installed builds.</p>
         </article>
 
         <article id="resultPanel" class="panel resultPanel hidden">
@@ -164,15 +194,7 @@
         </article>
       </section>
 
-      <aside class="rightRail">
-        <details class="panel logPanel">
-          <summary>
-            <span>Full runtime log</span>
-            <small>For debugging / copy</small>
-          </summary>
-          <pre id="log"></pre>
-        </details>
-      </aside>
+      <pre id="log" class="hidden" aria-hidden="true"></pre>
     </main>
 
     <script src="../../node_modules/babylonjs/babylon.js"></script>

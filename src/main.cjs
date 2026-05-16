@@ -2,7 +2,8 @@
 
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { pathToFileURL } = require('url');
+const { spawn, spawnSync } = require('child_process');
 const { app, BrowserWindow, dialog, ipcMain, shell, clipboard } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { PNG } = require('pngjs');
@@ -71,6 +72,17 @@ function sendUpdateState(state) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-state', state);
 }
 
+function compareVersions(a, b) {
+  const pa = String(a || '').split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const pb = String(b || '').split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+  }
+  return 0;
+}
+
 function isPackagedWin() {
   return app.isPackaged && process.platform === 'win32';
 }
@@ -91,22 +103,51 @@ function legacyRuntimeRoot() {
   return path.join(appRoot(), 'sharp-runtime');
 }
 
+function previousProductUserDataRoot() {
+  return path.join(app.getPath('appData'), 'ML-Sharp GUI');
+}
+
+function migrateDirIfNeeded(source, target, label) {
+  if (source === target || fs.existsSync(target) || !fs.existsSync(source)) return;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  try {
+    fs.renameSync(source, target);
+    sendLog(`Migrated ${label} to 2D to 3D user-data location: ${target}`);
+  } catch (err) {
+    sendLog(`Could not move legacy ${label} automatically: ${err.message || err}`);
+    sendLog(`If needed, copy ${source} to ${target}`);
+  }
+}
+
 function migrateLegacyRuntimeIfNeeded() {
   const current = runtimeRoot();
   const legacy = legacyRuntimeRoot();
-  if (current === legacy || fs.existsSync(current) || !fs.existsSync(legacy)) return;
-  fs.mkdirSync(path.dirname(current), { recursive: true });
-  try {
-    fs.renameSync(legacy, current);
-    sendLog(`Migrated sharp-runtime to stable update-safe location: ${current}`);
-  } catch (err) {
-    sendLog(`Could not move legacy sharp-runtime automatically: ${err.message || err}`);
-    sendLog(`If needed, copy ${legacy} to ${current}`);
-  }
+  const previous = previousProductUserDataRoot();
+  migrateDirIfNeeded(path.join(previous, 'sharp-runtime'), current, 'sharp-runtime');
+  migrateDirIfNeeded(path.join(previous, 'pixal3d-experimental'), pixal3dRoot(), 'Pixal3D backend');
+  migrateDirIfNeeded(path.join(previous, 'sharp-360-backend'), panorama360Root(), '360 backend');
+  migrateDirIfNeeded(path.join(previous, 'infinidepth-experimental'), infinidepthRoot(), 'InfiniDepth backend');
+  migrateDirIfNeeded(legacy, current, 'sharp-runtime');
 }
 
 function mlSharpSourcePath() {
   return path.join(resourcesRoot(), 'ml-sharp');
+}
+
+function writableMlSharpSourcePath() {
+  return path.join(runtimeRoot(), 'install-sources', 'ml-sharp');
+}
+
+function prepareWritableMlSharpSource() {
+  const source = mlSharpSourcePath();
+  const target = writableMlSharpSourcePath();
+  fs.rmSync(target, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.cpSync(source, target, {
+    recursive: true,
+    filter: (entry) => !/([/\\])(__pycache__|\.pytest_cache|sharp\.egg-info)([/\\]|$)/.test(entry),
+  });
+  return target;
 }
 
 function uvPath() {
@@ -128,6 +169,95 @@ function venvPythonPath() {
 function sharpExePath() {
   if (process.platform === 'win32') return path.join(runtimeRoot(), 'venv', 'Scripts', 'sharp.exe');
   return path.join(runtimeRoot(), 'venv', 'bin', 'sharp');
+}
+
+function runtimePythonEnv(extra = {}) {
+  const venvDir = path.join(runtimeRoot(), 'venv');
+  const binDir = process.platform === 'win32' ? path.join(venvDir, 'Scripts') : path.join(venvDir, 'bin');
+  return {
+    UV_PYTHON_INSTALL_DIR: path.join(runtimeRoot(), 'uv-python'),
+    UV_CACHE_DIR: path.join(runtimeRoot(), 'uv-cache'),
+    UV_LINK_MODE: 'copy',
+    PIP_DISABLE_PIP_VERSION_CHECK: '1',
+    VIRTUAL_ENV: venvDir,
+    PATH: binDir + path.delimiter + (process.env.PATH || ''),
+    ...extra,
+  };
+}
+
+function parsePyvenvConfig(venvDir = path.join(runtimeRoot(), 'venv')) {
+  const cfg = path.join(venvDir, 'pyvenv.cfg');
+  if (!fs.existsSync(cfg)) return {};
+  const values = {};
+  for (const line of fs.readFileSync(cfg, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^([^=]+?)\s*=\s*(.+)$/);
+    if (match) values[match[1].trim().toLowerCase()] = match[2].trim();
+  }
+  return values;
+}
+
+function resolvedVenvPythonPath(venvDir = path.join(runtimeRoot(), 'venv')) {
+  const shim = venvPythonPath();
+  const cfg = parsePyvenvConfig(venvDir);
+  const candidates = [];
+  if (cfg.executable) candidates.push(cfg.executable);
+  if (cfg['base-executable']) candidates.push(cfg['base-executable']);
+  if (cfg.home) candidates.push(path.join(cfg.home, process.platform === 'win32' ? 'python.exe' : 'python'));
+  candidates.push(shim);
+  return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || shim;
+}
+
+function canRunPythonSync(command, env = runtimePythonEnv()) {
+  if (!command || !fs.existsSync(command)) return false;
+  const result = spawnSync(command, ['-c', 'import sys; print(sys.executable)'], {
+    cwd: appRoot(),
+    env: { ...process.env, ...env },
+    windowsHide: true,
+    shell: false,
+    timeout: 15000,
+    encoding: 'utf8',
+  });
+  return result.status === 0;
+}
+
+function sharpCommand() {
+  return {
+    command: venvPythonPath(),
+    argsPrefix: ['-c', 'from sharp.cli import main_cli; main_cli()'],
+  };
+}
+
+function panorama360Root() {
+  return path.join(app.getPath('userData'), 'sharp-360-backend');
+}
+
+function panorama360RepoPath() {
+  return path.join(panorama360Root(), 'SHARP_360_to_Splat');
+}
+
+function panorama360InstallMarkerPath() {
+  return path.join(panorama360Root(), 'install-v1.json');
+}
+
+function infinidepthRoot() {
+  return path.join(app.getPath('userData'), 'infinidepth-experimental');
+}
+
+function infinidepthRepoPath() {
+  return path.join(infinidepthRoot(), 'InfiniDepth');
+}
+
+function infinidepthVenvPath() {
+  return path.join(infinidepthRoot(), 'venv');
+}
+
+function infinidepthPythonPath() {
+  if (process.platform === 'win32') return path.join(infinidepthVenvPath(), 'Scripts', 'python.exe');
+  return path.join(infinidepthVenvPath(), 'bin', 'python');
+}
+
+function infinidepthInstallMarkerPath() {
+  return path.join(infinidepthRoot(), 'install-v1.json');
 }
 
 function pixal3dRoot() {
@@ -373,16 +503,20 @@ async function checkRuntimeStatus() {
   const sharp = sharpExePath();
   const ml = mlSharpSourcePath();
   const uv = uvPath();
+  const resolvedPython = resolvedVenvPythonPath();
+  const pythonRunnable = canRunPythonSync(py);
   return {
     runtimeRoot: root,
     mlSharpSource: ml,
     uv,
     uvExists: uv === 'uv' || uv === 'uv.exe' ? false : fs.existsSync(uv),
     python: py,
+    resolvedPython,
     pythonExists: fs.existsSync(py),
+    pythonRunnable,
     sharp: sharp,
     sharpExists: fs.existsSync(sharp),
-    ready: fs.existsSync(py) && fs.existsSync(sharp),
+    ready: pythonRunnable && fs.existsSync(sharp),
   };
 }
 
@@ -397,38 +531,45 @@ async function installRuntime() {
 
   const uv = uvPath();
   const venvDir = path.join(runtimeRoot(), 'venv');
-  const env = {
-    UV_PYTHON_INSTALL_DIR: path.join(runtimeRoot(), 'uv-python'),
-    UV_CACHE_DIR: path.join(runtimeRoot(), 'uv-cache'),
-    UV_LINK_MODE: 'copy',
-    PIP_DISABLE_PIP_VERSION_CHECK: '1',
-  };
+  const env = runtimePythonEnv();
 
   const py = venvPythonPath();
-  if (fs.existsSync(py)) {
+  if (fs.existsSync(py) && canRunPythonSync(py, env)) {
     sendLog(`Reusing existing Python virtual environment: ${venvDir}`);
   } else {
     const venvArgs = ['venv', venvDir, '--python', '3.13', '--python-preference', 'managed'];
     if (fs.existsSync(venvDir)) {
-      sendLog('Found an incomplete previous SHARP venv; clearing and recreating it.');
+      sendLog(`Existing SHARP virtual environment cannot run Python; recreating: ${venvDir}`);
       venvArgs.push('--clear');
     }
     await runProcess(uv, venvArgs, { env });
+    if (!canRunPythonSync(py, env)) {
+      sendLog('Recreated venv still cannot run Python; clearing uv-managed Python and rebuilding once.');
+      fs.rmSync(venvDir, { recursive: true, force: true });
+      fs.rmSync(path.join(runtimeRoot(), 'uv-python'), { recursive: true, force: true });
+      await runProcess(uv, ['venv', venvDir, '--python', '3.13', '--python-preference', 'managed'], { env });
+      if (!canRunPythonSync(py, env)) {
+        throw new Error('SHARP runtime Python was rebuilt, but it still cannot execute. The bundled uv runtime may be damaged.');
+      }
+    }
   }
 
-  // Apple's requirements.txt contains `-e .`. For a portable app, install dependencies
-  // first, then install ml-sharp non-editably so the bundled resources can stay read-only.
+  // Apple's requirements.txt contains `-e .`. Copy ml-sharp out of Program Files
+  // first because setuptools writes egg-info beside pyproject.toml while building.
+  const installMl = prepareWritableMlSharpSource();
+  sendLog(`Prepared writable SHARP install source: ${installMl}`);
   const filteredRequirements = path.join(runtimeRoot(), 'requirements-no-editable.txt');
-  const reqText = fs.readFileSync(path.join(ml, 'requirements.txt'), 'utf8')
+  const reqText = fs.readFileSync(path.join(installMl, 'requirements.txt'), 'utf8')
     .split(/\r?\n/)
     .filter((line) => !line.trim().startsWith('-e '))
     .join('\n');
   fs.writeFileSync(filteredRequirements, reqText);
   await runProcess(uv, ['pip', 'install', '--python', py, '-r', filteredRequirements], {
-    cwd: ml,
+    cwd: installMl,
     env,
   });
-  await runProcess(uv, ['pip', 'install', '--python', py, ml], { cwd: ml, env });
+  await runProcess(uv, ['pip', 'install', '--python', py, installMl], { cwd: installMl, env });
+  await runProcess(py, ['-c', 'from sharp.cli import main_cli; print("SHARP import check OK")'], { cwd: installMl, env });
 
   sendLog('Runtime install complete.');
   sendJobState({ busy: false, label: 'Runtime ready' });
@@ -488,6 +629,234 @@ function findNewestPly(outputDir) {
 
 function findNewestGlb(outputDir) {
   return findNewestByExt(outputDir, '.glb');
+}
+
+function isPanoramaLike(width, height) {
+  if (!width || !height) return false;
+  return Math.abs((width / height) - 2) <= 0.06;
+}
+
+function checkPanorama360Status() {
+  const root = panorama360Root();
+  const repo = panorama360RepoPath();
+  const script = path.join(repo, 'insp_to_splat.py');
+  const marker = panorama360InstallMarkerPath();
+  return {
+    root,
+    repo,
+    script,
+    repoExists: fs.existsSync(script),
+    marker,
+    markerExists: fs.existsSync(marker),
+    ready: fs.existsSync(script) && fs.existsSync(marker),
+  };
+}
+
+function bridgeScriptPath() {
+  if (app.isPackaged) return path.join(process.resourcesPath, 'scripts', 'infinidepth_360_bridge.py');
+  return path.join(appRoot(), 'scripts', 'infinidepth_360_bridge.py');
+}
+
+function patchPanorama360ExternalDepth(repo) {
+  const script = path.join(repo, 'insp_to_splat.py');
+  if (!fs.existsSync(script)) throw new Error('SHARP_360 insp_to_splat.py was not found.');
+  let source = fs.readFileSync(script, 'utf8').replace(/\r\n/g, '\n');
+  if (source.includes('--external-depth-panorama')) return;
+
+  source = source.replace(
+    '    parser.add_argument(\n        "--da360-checkpoint",\n        type=Path,\n        default=None,\n        help="Optional DA360 checkpoint path. Defaults to checkpoints/DA360_large.pth.",\n    )',
+    '    parser.add_argument(\n        "--da360-checkpoint",\n        type=Path,\n        default=None,\n        help="Optional DA360 checkpoint path. Defaults to checkpoints/DA360_large.pth.",\n    )\n    parser.add_argument(\n        "--external-depth-panorama",\n        type=Path,\n        default=None,\n        help="Optional external panorama disparity/depth .npy used instead of running DA360.",\n    )'
+  );
+  source = source.replace(
+    '            da360_checkpoint_path = resolve_da360_checkpoint_path(args, config) if da360_alignment_enabled else None',
+    '            external_depth_panorama_path = getattr(args, "external_depth_panorama", None)\n            da360_checkpoint_path = None if external_depth_panorama_path else (resolve_da360_checkpoint_path(args, config) if da360_alignment_enabled else None)'
+  );
+  source = source.replace(
+    '                "checkpoint": describe_path_for_cache(da360_checkpoint_path),',
+    '                "checkpoint": describe_path_for_cache(da360_checkpoint_path),\n                "external_depth_panorama": describe_path_for_cache(external_depth_panorama_path),'
+  );
+  source = source.replace(
+    '                    if da360_checkpoint_path is None:\n                        raise ValueError("DA360 alignment is enabled, but no DA360 checkpoint path was resolved.")\n                    LOGGER.info(\n                        "Running DA360 panorama depth inference using checkpoint %s "\n                        "(grid=%dx%d, detail=%.0f%%)",\n                        da360_checkpoint_path, grid_res, grid_res, detail_wt * 100,\n                    )\n                    da360_predictor = build_da360_predictor(da360_checkpoint_path, device)\n                    reference_depth_panorama = predict_da360_disparity_panorama(da360_predictor, panorama, device)\n                    reference_depth_views = {\n                        view.name: extract_perspective_scalar_view(reference_depth_panorama, image_width, image_height, focal_px, focal_y_px, view)\n                        for view in extraction_layout.views\n                    }\n                    save_cached_depth_arrays(reference_depth_panorama, reference_depth_views, depth_cache_dir)\n                    del da360_predictor\n                    if device.type == "cuda":\n                        torch.cuda.empty_cache()',
+    '                    if external_depth_panorama_path:\n                        LOGGER.info("Loading external panorama depth reference from %s", external_depth_panorama_path)\n                        reference_depth_panorama = np.load(external_depth_panorama_path).astype(np.float32)\n                        reference_depth_views = {\n                            view.name: extract_perspective_scalar_view(reference_depth_panorama, image_width, image_height, focal_px, focal_y_px, view)\n                            for view in extraction_layout.views\n                        }\n                        save_cached_depth_arrays(reference_depth_panorama, reference_depth_views, depth_cache_dir)\n                    else:\n                        if da360_checkpoint_path is None:\n                            raise ValueError("DA360 alignment is enabled, but no DA360 checkpoint path was resolved.")\n                        LOGGER.info(\n                            "Running DA360 panorama depth inference using checkpoint %s "\n                            "(grid=%dx%d, detail=%.0f%%)",\n                            da360_checkpoint_path, grid_res, grid_res, detail_wt * 100,\n                        )\n                        da360_predictor = build_da360_predictor(da360_checkpoint_path, device)\n                        reference_depth_panorama = predict_da360_disparity_panorama(da360_predictor, panorama, device)\n                        reference_depth_views = {\n                            view.name: extract_perspective_scalar_view(reference_depth_panorama, image_width, image_height, focal_px, focal_y_px, view)\n                            for view in extraction_layout.views\n                        }\n                        save_cached_depth_arrays(reference_depth_panorama, reference_depth_views, depth_cache_dir)\n                        del da360_predictor\n                        if device.type == "cuda":\n                            torch.cuda.empty_cache()'
+  );
+  fs.writeFileSync(script, source);
+  sendLog('Patched SHARP 360 backend to accept external panorama depth references.');
+}
+
+async function installPanorama360() {
+  ensureDirs();
+  const runtime = await checkRuntimeStatus();
+  if (!runtime.ready) await installRuntime();
+
+  const root = panorama360Root();
+  const repo = panorama360RepoPath();
+  fs.mkdirSync(root, { recursive: true });
+  sendJobState({ busy: true, label: 'Installing 360 panorama backend' });
+  sendLog('Installing/checking SHARP 360 panorama backend. It stays isolated under app user-data.');
+
+  if (!fs.existsSync(path.join(repo, '.git'))) {
+    await runProcess('git', ['clone', '--depth', '1', '--recurse-submodules', 'https://github.com/Enndee/SHARP_360_to_Splat.git', repo], { cwd: root });
+  } else {
+    await runProcess('git', ['fetch', '--depth', '1', 'origin', 'main'], { cwd: repo });
+    await runProcess('git', ['checkout', 'FETCH_HEAD'], { cwd: repo });
+    await runProcess('git', ['reset', '--hard', 'FETCH_HEAD'], { cwd: repo });
+    await runProcess('git', ['submodule', 'update', '--init', '--recursive'], { cwd: repo });
+  }
+  patchPanorama360ExternalDepth(repo);
+
+  const py = venvPythonPath();
+  const uv = uvPath();
+  const env = runtimePythonEnv();
+  sendLog('Installing 360 backend Python extras into the existing SHARP runtime.');
+  await runProcess(uv, ['pip', 'install', '--python', py, 'pillow', 'numpy', 'scipy', 'opencv-python', 'pillow-heif'], { cwd: repo, env });
+  await runProcess(venvPythonPath(), ['-c', 'import PIL, numpy, scipy; import insp_to_splat; print("SHARP 360 import check OK")'], { cwd: repo, env });
+
+  fs.writeFileSync(marker, JSON.stringify({
+    installedAt: new Date().toISOString(),
+    repo,
+    python: py,
+  }, null, 2));
+  sendLog('SHARP 360 panorama backend ready.');
+  sendJobState({ busy: false, label: '360 backend ready' });
+  return checkPanorama360Status();
+}
+
+function checkInfiniDepthStatus() {
+  const root = infinidepthRoot();
+  const repo = infinidepthRepoPath();
+  const py = infinidepthPythonPath();
+  const depthModel = path.join(repo, 'checkpoints', 'depth', 'infinidepth.ckpt');
+  const mogeModel = path.join(repo, 'checkpoints', 'moge-2-vitl-normal', 'model.pt');
+  const marker = infinidepthInstallMarkerPath();
+  return {
+    root,
+    repo,
+    repoExists: fs.existsSync(path.join(repo, 'inference_depth.py')),
+    python: py,
+    pythonExists: fs.existsSync(py),
+    depthModel,
+    depthModelExists: fs.existsSync(depthModel),
+    mogeModel,
+    mogeModelExists: fs.existsSync(mogeModel),
+    marker,
+    markerExists: fs.existsSync(marker),
+    ready: fs.existsSync(path.join(repo, 'inference_depth.py')) && fs.existsSync(py) && fs.existsSync(depthModel) && fs.existsSync(mogeModel) && fs.existsSync(marker),
+  };
+}
+
+async function installInfiniDepth() {
+  const root = infinidepthRoot();
+  const repo = infinidepthRepoPath();
+  fs.mkdirSync(root, { recursive: true });
+  sendJobState({ busy: true, label: 'Installing InfiniDepth backend' });
+  sendLog('Installing/checking InfiniDepth experimental depth backend. This is separate from SHARP and can be large.');
+  if (!fs.existsSync(path.join(repo, '.git'))) {
+    await runProcess('git', ['clone', '--depth', '1', 'https://github.com/zju3dv/InfiniDepth.git', repo], { cwd: root });
+  } else {
+    await runProcess('git', ['fetch', '--depth', '1', 'origin', 'main'], { cwd: repo });
+    await runProcess('git', ['checkout', 'FETCH_HEAD'], { cwd: repo });
+    await runProcess('git', ['reset', '--hard', 'FETCH_HEAD'], { cwd: repo });
+  }
+
+  const uv = uvPath();
+  const py = infinidepthPythonPath();
+  const env = {
+    UV_CACHE_DIR: path.join(root, 'uv-cache'),
+    UV_LINK_MODE: 'copy',
+    PIP_DISABLE_PIP_VERSION_CHECK: '1',
+  };
+  if (!fs.existsSync(py)) {
+    await runProcess(uv, ['venv', infinidepthVenvPath(), '--python', '3.10', '--python-preference', 'managed'], { env });
+  }
+  sendLog('Installing InfiniDepth Python dependencies. PyTorch/CUDA packages are large.');
+  await runProcess(uv, ['pip', 'install', '--python', py, '--extra-index-url', 'https://download.pytorch.org/whl/cu128', 'torch', 'torchvision', 'torchaudio'], { cwd: repo, env });
+  await runProcess(uv, ['pip', 'install', '--python', py, '-r', path.join(repo, 'requirements.txt')], { cwd: repo, env });
+  const status = checkInfiniDepthStatus();
+  if (!status.depthModelExists || !status.mogeModelExists) {
+    sendLog('InfiniDepth code is installed, but checkpoints are still needed: checkpoints/depth/infinidepth.ckpt and checkpoints/moge-2-vitl-normal/model.pt.');
+    sendLog('Download links are documented in InfiniDepth INSTALL.md.');
+  }
+  fs.writeFileSync(infinidepthInstallMarkerPath(), JSON.stringify({
+    installedAt: new Date().toISOString(),
+    repo,
+    python: py,
+  }, null, 2));
+  sendJobState({ busy: false, label: 'InfiniDepth backend ready' });
+  return checkInfiniDepthStatus();
+}
+
+async function buildInfiniDepthPanoramaReference(inputPath) {
+  const status = checkInfiniDepthStatus();
+  if (!status.ready) await installInfiniDepth();
+  const ready = checkInfiniDepthStatus();
+  if (!ready.depthModelExists || !ready.mogeModelExists) {
+    throw new Error('InfiniDepth checkpoints are missing. Place infinidepth.ckpt under checkpoints/depth/ and MoGe model.pt under checkpoints/moge-2-vitl-normal/ in the InfiniDepth backend folder.');
+  }
+  if (!fs.existsSync(bridgeScriptPath())) {
+    throw new Error('InfiniDepth 360 bridge script was not packaged with the app.');
+  }
+  const output = path.join(runtimeRoot(), 'converted-inputs', sanitizeStem(inputPath) + '_infinidepth_panorama.npy');
+  await runProcess(infinidepthPythonPath(), [
+    bridgeScriptPath(),
+    '--repo', infinidepthRepoPath(),
+    '--input', inputPath,
+    '--output', output,
+    '--depth-model', ready.depthModel,
+    '--moge-model', ready.mogeModel,
+  ], { cwd: infinidepthRepoPath() });
+  return output;
+}
+
+async function runPanorama360(request = {}) {
+  if (!request.inputPath || !fs.existsSync(request.inputPath)) throw new Error('Input panorama file does not exist.');
+  if (!request.outputFolder) throw new Error('Choose an output folder first.');
+  const ext = path.extname(request.inputPath).toLowerCase();
+  if (!['.png', '.jpg', '.jpeg'].includes(ext)) {
+    throw new Error('360 panorama mode currently supports stitched PNG/JPEG inputs. Convert HEIC/WEBP/EXR to PNG first.');
+  }
+
+  const status = checkPanorama360Status();
+  if (!status.ready) await installPanorama360();
+
+  fs.mkdirSync(request.outputFolder, { recursive: true });
+  const outputPly = path.join(request.outputFolder, sanitizeStem(request.inputPath) + '_360_merged.ply');
+  const sideCount = Math.max(2, Math.min(12, Number.parseInt(request.panoramaSideCount || 4, 10) || 4));
+  const requestedAlignment = request.panoramaAlignmentMode === 'infinidepth' ? 'infinidepth' : (request.panoramaAlignmentMode === 'da360' ? 'da360' : 'overlap');
+  const externalDepthPanorama = requestedAlignment === 'infinidepth' ? await buildInfiniDepthPanoramaReference(request.inputPath) : null;
+  const alignmentMode = requestedAlignment === 'infinidepth' ? 'da360' : requestedAlignment;
+  const args = [
+    '-u',
+    path.join(panorama360RepoPath(), 'insp_to_splat.py'),
+    '-i',
+    request.inputPath,
+    '-o',
+    outputPly,
+    '--side-count',
+    String(sideCount),
+    '--format',
+    'ply',
+    '--device',
+    request.device || 'default',
+    '--alignment-mode',
+    alignmentMode,
+    '--config',
+    path.join(panorama360RepoPath(), alignmentMode === 'overlap' ? 'insp_settings_starter.json' : 'insp_settings.json'),
+    '--verbose',
+  ];
+  if (request.panoramaKeepIntermediates) args.push('--keep-intermediates');
+  else args.push('--delete-temp-files');
+  if (externalDepthPanorama) args.push('--external-depth-panorama', externalDepthPanorama);
+
+  sendJobState({ busy: true, label: 'Running 360 panorama SHARP' });
+  sendLog('Running 360 panorama pipeline: ' + sideCount + ' views, ' + requestedAlignment + ' alignment, ' + (request.device || 'default') + ' device.');
+  if ((request.device || 'default') === 'cpu') sendLog('CPU mode is supported as a fallback but will be slow.');
+  await runProcess(venvPythonPath(), args, { cwd: panorama360RepoPath(), env: runtimePythonEnv() });
+
+  const newest = fs.existsSync(outputPly) ? { filePath: outputPly, size: fs.statSync(outputPly).size } : findNewestPly(request.outputFolder);
+  if (!newest) throw new Error('360 panorama pipeline finished but no .ply was found in the output folder.');
+  sendLog('360 PLY written: ' + newest.filePath);
+  sendJobState({ busy: false, label: '360 panorama complete' });
+  return { ok: true, outputPly: newest.filePath, outputFolder: request.outputFolder, sizeBytes: newest.size, provider: 'sharp-360' };
 }
 
 function _oldFindNewestPly(outputDir) {
@@ -718,8 +1087,7 @@ function colorFromProperties(values) {
 }
 
 function orientPreviewPoint(x, y, z) {
-  // SHARP/PlayCanvas output lands upside down in this lightweight preview.
-  // Rotate around X so vertical orientation is corrected without mirroring left/right.
+  // Match the X-axis flip used by the Babylon splat preview in the point fallback.
   return { x, y: -y, z: -z };
 }
 
@@ -780,6 +1148,7 @@ function loadPlyPreview(filePath, maxPoints = 140000) {
 
   if (!written) throw new Error('PLY contained no readable vertices.');
   return {
+    fileUrl: pathToFileURL(filePath).href,
     vertexCount: header.vertexCount,
     shownCount: written,
     positions: Array.from(positions.slice(0, written * 3)),
@@ -794,7 +1163,13 @@ ipcMain.handle('check-for-updates', async () => {
     return { ok: false, status: 'dev', message: 'Updates are only available in the installed Windows build.' };
   }
   const result = await autoUpdater.checkForUpdates();
-  return { ok: true, status: 'checking', result: !!result };
+  const latestVersion = result && result.updateInfo && result.updateInfo.version;
+  if (!latestVersion || compareVersions(latestVersion, app.getVersion()) <= 0) {
+    const state = { ok: true, status: 'none', message: `You're up to date (${app.getVersion()}).`, info: result && result.updateInfo };
+    sendUpdateState(state);
+    return state;
+  }
+  return { ok: true, status: 'checking', message: 'Checking for updates…', result: !!result };
 });
 
 ipcMain.handle('download-update', async () => {
@@ -846,10 +1221,12 @@ ipcMain.handle('select-output-folder', async () => {
 ipcMain.handle('inspect-input', async (_event, inputPath, opts) => {
   if (!inputPath || !fs.existsSync(inputPath)) throw new Error('Input file does not exist.');
   const image = await loadImage(inputPath, opts || {});
+  const ext = path.extname(inputPath).toLowerCase();
   const previewDataUrl = makePreviewPngDataUrl(image, 1400);
   return {
     width: image.width,
     height: image.height,
+    isPanorama: isPanoramaLike(image.width, image.height) && ['.png', '.jpg', '.jpeg'].includes(ext),
     source: image.source,
     sourceColorSpace: image.sourceColorSpace,
     previewDataUrl,
@@ -857,6 +1234,32 @@ ipcMain.handle('inspect-input', async (_event, inputPath, opts) => {
 });
 
 ipcMain.handle('check-runtime', checkRuntimeStatus);
+ipcMain.handle('check-panorama360', async () => checkPanorama360Status());
+ipcMain.handle('check-infinidepth', async () => checkInfiniDepthStatus());
+ipcMain.handle('install-infinidepth', async () => {
+  try {
+    return await installInfiniDepth();
+  } catch (err) {
+    sendJobState({ busy: false, label: 'InfiniDepth install failed' });
+    throw err;
+  }
+});
+ipcMain.handle('install-panorama360', async () => {
+  try {
+    return await installPanorama360();
+  } catch (err) {
+    sendJobState({ busy: false, label: '360 backend install failed' });
+    throw err;
+  }
+});
+ipcMain.handle('run-panorama360', async (_event, request) => {
+  try {
+    return await runPanorama360(request || {});
+  } catch (err) {
+    sendJobState({ busy: false, label: '360 panorama failed' });
+    throw err;
+  }
+});
 ipcMain.handle('check-pixal3d', async () => checkPixal3DStatus());
 ipcMain.handle('install-pixal3d', async (_event, request) => {
   try {
@@ -896,10 +1299,10 @@ ipcMain.handle('run-sharp', async (_event, request) => {
     if (!status.ready) await installRuntime();
 
     const prepared = await prepareInferenceInput(request.inputPath, request);
-    const sharp = sharpExePath();
-    const args = ['predict', '-i', prepared.inferencePath, '-o', request.outputFolder, '--device', request.device || 'default'];
+    const sharp = sharpCommand();
+    const args = [...sharp.argsPrefix, 'predict', '-i', prepared.inferencePath, '-o', request.outputFolder, '--device', request.device || 'default'];
     if (request.verbose) args.push('-v');
-    await runProcess(sharp, args, { cwd: mlSharpSourcePath() });
+    await runProcess(sharp.command, args, { cwd: mlSharpSourcePath(), env: runtimePythonEnv() });
     const newest = findNewestPly(request.outputFolder);
     if (!newest) throw new Error('SHARP finished but no .ply was found in the output folder.');
     sendLog(`PLY written: ${newest.filePath}`);
@@ -935,6 +1338,19 @@ ipcMain.handle('open-path', async (_event, filePath) => {
 });
 
 ipcMain.handle('load-ply-preview', async (_event, filePath) => loadPlyPreview(filePath));
+ipcMain.handle('load-ply-preview-as-data-url', async (_event, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) throw new Error('PLY file does not exist.');
+  const buffer = fs.readFileSync(filePath);
+  return `data:model/ply;base64,${buffer.toString('base64')}`;
+});
+
+ipcMain.handle('load-ply-bytes', async (_event, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) throw new Error('PLY file does not exist.');
+  return {
+    name: path.basename(filePath),
+    base64: fs.readFileSync(filePath).toString('base64'),
+  };
+});
 
 ipcMain.handle('load-glb-preview', async (_event, filePath) => {
   if (!filePath || !fs.existsSync(filePath)) throw new Error('GLB file does not exist.');
@@ -953,4 +1369,24 @@ ipcMain.handle('open-external', async (_event, url) => {
 ipcMain.handle('copy-text', async (_event, text) => {
   clipboard.writeText(String(text || ''));
   return true;
+});
+
+ipcMain.handle('get-last-output-folder', async () => {
+  try {
+    const data = fs.readFileSync(path.join(app.getPath('userData'), 'last-output-folder.json'), 'utf8');
+    const parsed = JSON.parse(data);
+    return parsed.path || '';
+  } catch {
+    return '';
+  }
+});
+
+ipcMain.handle('set-last-output-folder', async (_event, folderPath) => {
+  try {
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.writeFileSync(path.join(app.getPath('userData'), 'last-output-folder.json'), JSON.stringify({ path: folderPath }));
+    return true;
+  } catch {
+    return false;
+  }
 });

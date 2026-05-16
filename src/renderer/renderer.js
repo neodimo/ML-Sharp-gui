@@ -10,6 +10,7 @@ const state = {
   outputFile: '',
   busy: false,
   activeMode: 'sharp',
+  inputIsPanorama: false,
   progressMode: 'idle',
   downloads: { active: false, startedAt: 0, totalBytes: 0, doneBytes: 0, files: new Map(), doneFiles: 0 },
   longPhase: { active: false, label: '', startedAt: 0 },
@@ -20,9 +21,12 @@ const state = {
     rotX: -0.28,
     rotY: 0.45,
     zoom: 1,
+    panX: 0,
+    panY: 0,
     dragging: false,
     lastX: 0,
     lastY: 0,
+    useBabylon: false,
   },
 };
 
@@ -38,8 +42,10 @@ const el = {
   device: $('device'),
   sharpAdvancedPanel: $('sharpAdvancedPanel'),
   sharpModeButton: $('sharpModeButton'),
+  panoramaModeButton: $('panoramaModeButton'),
   pixalModeButton: $('pixalModeButton'),
   sharpModePanel: $('sharpModePanel'),
+  panoramaModePanel: $('panoramaModePanel'),
   pixalModePanel: $('pixalModePanel'),
   modeSummary: $('modeSummary'),
   resultPanel: $('resultPanel'),
@@ -65,8 +71,16 @@ const el = {
   pixalAccept: $('pixalAccept'),
   pixalRunButton: $('pixalRunButton'),
   pixalStatus: $('pixalStatus'),
+  panoramaSideCount: $('panoramaSideCount'),
+  panoramaAlignmentMode: $('panoramaAlignmentMode'),
+  panoramaKeepIntermediates: $('panoramaKeepIntermediates'),
+  panoramaRunButton: $('panoramaRunButton'),
+  panoramaStatus: $('panoramaStatus'),
   updateButton: $('updateButton'),
   restartUpdateButton: $('restartUpdateButton'),
+  updateProgressBlock: $('updateProgressBlock'),
+  updateProgressBar: $('updateProgressBar'),
+  updateProgressLabel: $('updateProgressLabel'),
   updateStatus: $('updateStatus'),
   plyCanvas: $('plyCanvas'),
   viewerPlaceholder: $('viewerPlaceholder'),
@@ -76,6 +90,9 @@ const el = {
 
 let babylonEngine = null;
 let babylonScene = null;
+let babylonCamera = null;
+let activeBabylonKind = '';
+let updateCheckTimer = null;
 
 function setStatus(message, kind = '') {
   el.status.className = `status ${kind}`.trim();
@@ -278,10 +295,13 @@ function updateProgressFromLog(line) {
   } else if (text.includes('predict') || text.includes('running sharp')) {
     setProgress('busy');
     setProgressDetails('Running SHARP…');
+  } else if (text.includes('360 panorama pipeline') || text.includes('running 360')) {
+    setProgress('busy');
+    setProgressDetails('Running 360 panorama SHARP…');
   } else if (text.includes('running pixal3d')) {
     setProgress('busy');
     setProgressDetails('Running Pixal3D…');
-  } else if (text.includes('ply written') || text.includes('glb written') || text.includes('complete')) {
+  } else if (text.includes('ply written') || text.includes('360 ply written') || text.includes('glb written') || text.includes('complete')) {
     state.longPhase.active = false;
     resetDownloadProgress();
     setProgress('done');
@@ -296,20 +316,26 @@ function setBusy(busy) {
   el.chooseInput.disabled = busy;
   el.chooseOutputFolder.disabled = busy;
   el.runButton.disabled = busy;
+  el.panoramaRunButton.disabled = busy;
   el.pixalRunButton.disabled = busy;
   el.cancelButton.disabled = !busy;
 }
 
 function setMode(mode) {
+  if (mode === 'panorama' && !state.inputIsPanorama) mode = 'sharp';
   state.activeMode = mode;
   const isSharp = mode === 'sharp';
+  const isPanorama = mode === 'panorama';
+  const isPixal = mode === 'pixal';
   el.sharpModeButton.classList.toggle('active', isSharp);
-  el.pixalModeButton.classList.toggle('active', !isSharp);
+  el.panoramaModeButton.classList.toggle('active', isPanorama);
+  el.pixalModeButton.classList.toggle('active', isPixal);
   el.sharpModePanel.classList.toggle('hidden', !isSharp);
-  el.pixalModePanel.classList.toggle('hidden', isSharp);
-  el.sharpAdvancedPanel.classList.toggle('hidden', !isSharp);
-  el.modeSummary.textContent = isSharp ? 'SHARP .PLY selected' : 'Pixal3D .GLB selected';
-  setStatus(isSharp ? 'SHARP will output a Gaussian splat .PLY.' : 'Pixal3D will output an experimental textured .GLB.', 'busy');
+  el.panoramaModePanel.classList.toggle('hidden', !isPanorama);
+  el.pixalModePanel.classList.toggle('hidden', !isPixal);
+  el.sharpAdvancedPanel.classList.toggle('hidden', isPixal);
+  el.modeSummary.textContent = isSharp ? 'SHARP .PLY selected' : (isPanorama ? '360 panorama .PLY selected' : 'Pixal3D .GLB selected');
+  setStatus(isSharp ? 'SHARP will output a Gaussian splat .PLY.' : (isPanorama ? '360 mode will output a merged Gaussian splat .PLY.' : 'Pixal3D will output an experimental textured .GLB.'), 'busy');
 }
 
 function showOutputPanel(kind) {
@@ -333,6 +359,9 @@ function readOptions() {
     device: el.device.value,
     verbose: true,
     acceptLicense: !!el.pixalAccept.checked,
+    panoramaSideCount: el.panoramaSideCount.value,
+    panoramaAlignmentMode: el.panoramaAlignmentMode.value,
+    panoramaKeepIntermediates: !!el.panoramaKeepIntermediates.checked,
   };
 }
 
@@ -352,16 +381,31 @@ async function refreshInputPreview() {
   try {
     const info = await sharpSplat.inspectInput(state.inputPath, readOptions());
     el.inputPreview.src = info.previewDataUrl;
+    const previewShell = el.inputPreview.closest('.inputPreviewShell');
+    if (previewShell) previewShell.classList.add('hasPreview');
     el.inputPreview.classList.remove('hidden');
     el.inputPlaceholder.classList.add('hidden');
-    el.inputInfo.textContent = `${info.width}×${info.height} • ${info.source.toUpperCase()} • ${el.sourceColorSpace.value}`;
-    setStatus('Input loaded. Choose output folder, then run SHARP.', 'good');
+    state.inputIsPanorama = !!info.isPanorama;
+    el.panoramaModeButton.classList.toggle('hidden', !state.inputIsPanorama);
+    el.inputInfo.textContent = `${info.width}×${info.height} • ${info.source.toUpperCase()} • ${state.inputIsPanorama ? '360 pano' : el.sourceColorSpace.value}`;
+    if (state.inputIsPanorama) {
+      setStatus('2:1 panorama detected. 360 SHARP mode is available.', 'good');
+      if (state.activeMode === 'sharp') setMode('panorama');
+    } else {
+      if (state.activeMode === 'panorama') setMode('sharp');
+      setStatus('Input loaded. Choose output folder, then run SHARP.', 'good');
+    }
     setProgress('idle');
   } catch (err) {
     el.inputPreview.removeAttribute('src');
     el.inputPreview.classList.add('hidden');
+    const previewShell = el.inputPreview.closest('.inputPreviewShell');
+    if (previewShell) previewShell.classList.remove('hasPreview');
     el.inputPlaceholder.classList.remove('hidden');
     el.inputInfo.textContent = '';
+    state.inputIsPanorama = false;
+    el.panoramaModeButton.classList.add('hidden');
+    if (state.activeMode === 'panorama') setMode('sharp');
     appendError('Preview failed', err);
     setStatus('Preview failed — see Runtime log.', 'bad');
   } finally {
@@ -383,6 +427,17 @@ async function chooseOutputFolder() {
   if (!selected) return;
   state.outputFolder = selected;
   el.outputFolder.value = selected;
+  sharpSplat.setLastOutputFolder(selected);
+}
+
+async function restoreOutputFolder() {
+  try {
+    const saved = await sharpSplat.getLastOutputFolder();
+    if (saved && saved.length > 1) {
+      state.outputFolder = saved;
+      el.outputFolder.value = saved;
+    }
+  } catch { /* ignore */ }
 }
 
 async function checkRuntime(showGood = true) {
@@ -406,10 +461,30 @@ async function checkRuntime(showGood = true) {
 async function checkForUpdates() {
   el.updateButton.disabled = true;
   el.updateStatus.textContent = 'Checking for updates…';
+  clearTimeout(updateCheckTimer);
+  updateCheckTimer = setTimeout(() => {
+    if (el.updateButton.disabled) {
+      el.updateButton.disabled = false;
+      el.updateStatus.textContent = 'No updates available.';
+    }
+  }, 5000);
   try {
     const result = await sharpSplat.checkForUpdates();
-    if (result && result.ok === false) el.updateStatus.textContent = result.message || 'Updater is unavailable in this build.';
+    if (result && result.ok === false) {
+      clearTimeout(updateCheckTimer);
+      updateCheckTimer = null;
+      el.updateStatus.textContent = result.message || 'Updater is unavailable in this build.';
+      el.updateButton.disabled = false;
+    } else if (result && result.status === 'none') {
+      clearTimeout(updateCheckTimer);
+      updateCheckTimer = null;
+      el.updateStatus.textContent = result.message || 'No updates available.';
+      el.updateButton.disabled = false;
+      el.updateProgressBlock.classList.add('hidden');
+    }
   } catch (err) {
+    clearTimeout(updateCheckTimer);
+    updateCheckTimer = null;
     appendError('Update check failed', err);
     el.updateStatus.textContent = 'Update check failed — see Runtime log.';
     el.updateButton.disabled = false;
@@ -477,6 +552,77 @@ async function runSharp() {
     setStatus('SHARP failed — see Runtime log.', 'bad');
   } finally {
     setBusy(false);
+  }
+}
+
+async function checkPanorama360(showGood = true) {
+  try {
+    const status = await sharpSplat.checkPanorama360();
+    el.panoramaStatus.textContent = status.ready ? `Ready: ${status.repo}` : `Needs install: ${status.root}`;
+    appendLog(`360 backend root: ${status.root}`);
+    appendLog(`360 backend repo: ${status.repoExists ? status.repo : 'not cloned yet'}`);
+    if (showGood) setStatus(status.ready ? '360 panorama backend ready.' : '360 panorama backend not installed yet.', status.ready ? 'good' : 'busy');
+    return status;
+  } catch (err) {
+    appendError('360 backend check failed', err);
+    el.panoramaStatus.textContent = '360 backend check failed — see Runtime log.';
+    return null;
+  }
+}
+
+async function installPanorama360() {
+  resetDownloadProgress();
+  setBusy(true);
+  setStatus('Installing/checking 360 panorama backend… first run can be large.', 'busy');
+  try {
+    await sharpSplat.installPanorama360();
+    setStatus('360 panorama backend ready.', 'good');
+    await checkPanorama360(false);
+  } catch (err) {
+    appendError('360 backend install failed', err);
+    setStatus('360 backend install failed — see Runtime log.', 'bad');
+    el.panoramaStatus.textContent = 'Install failed — see Runtime log.';
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function runPanorama360() {
+  resetDownloadProgress();
+  if (!state.inputPath) { setStatus('Choose a 2:1 panorama first.', 'bad'); return; }
+  if (!state.inputIsPanorama) { setStatus('360 mode needs a stitched 2:1 panorama input.', 'bad'); return; }
+  if (!state.outputFolder) { await chooseOutputFolder(); if (!state.outputFolder) return; }
+  el.resultActions.classList.add('hidden');
+  state.outputPly = '';
+  state.outputFile = '';
+  setProgress('busy');
+  setBusy(true);
+  setStatus('Running 360 panorama SHARP…', 'busy');
+  try {
+    const result = await sharpSplat.runPanorama360(readOptions());
+    state.outputPly = result.outputPly;
+    state.outputFile = result.outputPly;
+    el.resultActions.classList.remove('hidden');
+    showOutputPanel('ply');
+    const size = result.sizeBytes ? ` • ${humanBytes(result.sizeBytes)}` : '';
+    setStatus(`360 panorama PLY done: ${result.outputPly}${size}.`, 'good');
+    setProgress('done');
+    await loadPlyViewer(result.outputPly);
+  } catch (err) {
+    appendError('360 panorama SHARP failed', err);
+    setStatus('360 panorama SHARP failed — see Runtime log.', 'bad');
+  } finally {
+    setBusy(false);
+  }
+}
+
+function updatePanoramaStatusHint() {
+  if (el.panoramaAlignmentMode.value === 'infinidepth') {
+    el.panoramaStatus.textContent = 'InfiniDepth uses a separate optional backend and checkpoints; first run may be large.';
+  } else if (el.panoramaAlignmentMode.value === 'da360') {
+    el.panoramaStatus.textContent = 'DA360 requires its checkpoint in the 360 backend.';
+  } else {
+    el.panoramaStatus.textContent = 'Overlap alignment is the default lightweight path.';
   }
 }
 
@@ -577,30 +723,50 @@ sharpSplat.onJobState((jobState) => {
 });
 sharpSplat.onUpdateState((update) => {
   if (!update) return;
+  clearTimeout(updateCheckTimer);
+  updateCheckTimer = null;
   el.updateStatus.textContent = update.message || update.status || '';
   appendLog(`[update] ${update.message || update.status}`);
   el.updateButton.disabled = update.status === 'checking' || update.status === 'downloading';
+
+  // Show download progress bar in header
+  if (update.status === 'downloading' && update.progress && update.progress.percent !== undefined) {
+    el.updateProgressBlock.classList.remove('hidden');
+    el.updateProgressBar.style.width = `${Math.max(0, Math.min(100, update.progress.percent))}%`;
+    el.updateProgressLabel.textContent = `${Math.round(update.progress.percent)}%`;
+  } else if (update.status === 'downloaded') {
+    el.updateProgressBlock.classList.add('hidden');
+  }
+
   if (update.status === 'available') {
     el.updateStatus.textContent = `${update.message} Downloading now…`;
     sharpSplat.downloadUpdate().catch((err) => {
       appendError('Update download failed', err);
       el.updateStatus.textContent = 'Update download failed — see Runtime log.';
       el.updateButton.disabled = false;
+      el.updateProgressBlock.classList.add('hidden');
     });
   }
   if (update.status === 'downloaded') {
     el.restartUpdateButton.classList.remove('hidden');
-    el.restartUpdateButton.textContent = 'Apply update';
     el.updateButton.disabled = false;
+    el.restartUpdateButton.textContent = 'Apply update';
+    el.updateStatus.textContent = 'Update ready. Apply it from here.';
   }
-  if (update.status === 'none' || update.status === 'error') el.updateButton.disabled = false;
+  if (update.status === 'none' || update.status === 'error') {
+    el.updateButton.disabled = false;
+    el.updateProgressBlock.classList.add('hidden');
+  }
 });
 
 el.chooseInput.addEventListener('click', chooseInput);
 el.chooseOutputFolder.addEventListener('click', chooseOutputFolder);
 el.sharpModeButton.addEventListener('click', () => setMode('sharp'));
+el.panoramaModeButton.addEventListener('click', () => setMode('panorama'));
 el.pixalModeButton.addEventListener('click', () => setMode('pixal'));
 el.runButton.addEventListener('click', runSharp);
+el.panoramaRunButton.addEventListener('click', runPanorama360);
+el.panoramaAlignmentMode.addEventListener('change', updatePanoramaStatusHint);
 el.cancelButton.addEventListener('click', cancelJob);
 el.copyLogButton.addEventListener('click', copyLog);
 el.pixalRunButton.addEventListener('click', runPixal3D);
@@ -633,10 +799,27 @@ function resizeCanvasToDisplaySize() {
   return dpr;
 }
 
+function applyYFlip(scene, flip) {
+  if (!scene) return;
+  const quat = flip ? BABYLON.Quaternion.RotationAxis(new BABYLON.Vector3(1, 0, 0), Math.PI) : BABYLON.Quaternion.Identity();
+  scene.getMeshes().forEach((mesh) => { mesh.rotationQuaternion = quat; });
+}
+
+function resetGsCamera(scene, camera) {
+  if (!camera) return;
+  camera.setTarget(BABYLON.Vector3.Zero());
+  camera.alpha = Math.PI * 0.55;
+  camera.beta = Math.PI * 0.42;
+  camera.radius = 0.4;
+  if (scene) applyYFlip(scene, true);
+}
+
 function resetViewerCamera() {
   state.viewer.rotX = -0.28;
   state.viewer.rotY = 0.45;
   state.viewer.zoom = 1;
+  state.viewer.panX = 0;
+  state.viewer.panY = 0;
   drawPlyViewer();
 }
 
@@ -650,17 +833,19 @@ function drawPlyViewer() {
   ctx.fillStyle = '#080b12';
   ctx.fillRect(0, 0, width, height);
 
-  const { positions, colors, bounds, rotX, rotY, zoom } = state.viewer;
+  const { positions, colors, bounds, rotX, rotY, zoom, panX, panY } = state.viewer;
   if (!positions.length || !bounds) return;
 
   const cx = (bounds.minX + bounds.maxX) * 0.5;
   const cy = (bounds.minY + bounds.maxY) * 0.5;
   const cz = (bounds.minZ + bounds.maxZ) * 0.5;
-  const extent = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, bounds.maxZ - bounds.minZ, 1e-6);
-  const scale = Math.min(width, height) * 0.72 * zoom / extent;
   const sinX = Math.sin(rotX), cosX = Math.cos(rotX);
   const sinY = Math.sin(rotY), cosY = Math.cos(rotY);
-  const pts = [];
+  const projected = [];
+  let minPX = Number.POSITIVE_INFINITY;
+  let minPY = Number.POSITIVE_INFINITY;
+  let maxPX = Number.NEGATIVE_INFINITY;
+  let maxPY = Number.NEGATIVE_INFINITY;
 
   for (let i = 0; i < positions.length; i += 3) {
     let x = positions[i] - cx;
@@ -670,9 +855,13 @@ function drawPlyViewer() {
     const z1 = -x * sinY + z * cosY;
     const y2 = y * cosX - z1 * sinX;
     const z2 = y * sinX + z1 * cosX;
-    pts.push({
-      x: width * 0.5 + x1 * scale,
-      y: height * 0.5 - y2 * scale,
+    minPX = Math.min(minPX, x1);
+    minPY = Math.min(minPY, y2);
+    maxPX = Math.max(maxPX, x1);
+    maxPY = Math.max(maxPY, y2);
+    projected.push({
+      x: x1,
+      y: y2,
       z: z2,
       r: colors[i],
       g: colors[i + 1],
@@ -680,6 +869,16 @@ function drawPlyViewer() {
     });
   }
 
+  const projectedWidth = Math.max(maxPX - minPX, 1e-6);
+  const projectedHeight = Math.max(maxPY - minPY, 1e-6);
+  const scale = Math.min(width * 0.82 / projectedWidth, height * 0.82 / projectedHeight) * zoom;
+  const centerPX = (minPX + maxPX) * 0.5;
+  const centerPY = (minPY + maxPY) * 0.5;
+  const pts = projected.map((pt) => ({
+    ...pt,
+    x: width * 0.5 + panX * dpr + (pt.x - centerPX) * scale,
+    y: height * 0.5 + panY * dpr - (pt.y - centerPY) * scale,
+  }));
   pts.sort((a, b) => a.z - b.z);
   const radius = Math.max(0.75 * dpr, Math.min(2.2 * dpr, 70000 / Math.max(positions.length, 1)));
   for (const pt of pts) {
@@ -688,44 +887,133 @@ function drawPlyViewer() {
   }
 }
 
+function disposeBabylonViewer() {
+  if (babylonEngine) {
+    babylonEngine.dispose();
+    babylonEngine = null;
+  }
+  babylonScene = null;
+  babylonCamera = null;
+  activeBabylonKind = '';
+  state.viewer.useBabylon = false;
+  if (window._babylonResizeHandler) {
+    window.removeEventListener('resize', window._babylonResizeHandler);
+    window._babylonResizeHandler = null;
+  }
+}
+
+function createBabylonViewer(canvas, kind) {
+  disposeBabylonViewer();
+  babylonEngine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+  babylonScene = new BABYLON.Scene(babylonEngine);
+  babylonScene.clearColor = new BABYLON.Color4(0.06, 0.065, 0.075, 1);
+  babylonCamera = new BABYLON.ArcRotateCamera('camera', Math.PI / 2.4, Math.PI / 2.7, 2.4, BABYLON.Vector3.Zero(), babylonScene);
+  babylonCamera.attachControl(canvas, true);
+  babylonCamera.wheelPrecision = 45;
+  new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0.3, 1, 0.4), babylonScene).intensity = 1.1;
+  const dir = new BABYLON.DirectionalLight('key', new BABYLON.Vector3(-0.6, -1, -0.8), babylonScene);
+  dir.intensity = 1.4;
+  activeBabylonKind = kind;
+  state.viewer.useBabylon = true;
+  window._babylonResizeHandler = () => babylonEngine && babylonEngine.resize();
+  window.addEventListener('resize', window._babylonResizeHandler);
+  return { engine: babylonEngine, scene: babylonScene, camera: babylonCamera };
+}
+
+function boundsFromMeshes(meshes) {
+  const min = new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+  const max = new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
+  let found = false;
+  for (const mesh of meshes || []) {
+    if (!mesh || !mesh.getBoundingInfo) continue;
+    mesh.computeWorldMatrix(true);
+    const info = mesh.getBoundingInfo();
+    min.copyFrom(info.boundingBox.minimumWorld);
+    max.copyFrom(info.boundingBox.maximumWorld);
+    found = true;
+  }
+  return found ? { min, max } : null;
+}
+
+function boundsFromPlyMeta(ply) {
+  if (!ply || !ply.bounds) return null;
+  const { minX, minY, minZ, maxX, maxY, maxZ } = ply.bounds;
+  if (![minX, minY, minZ, maxX, maxY, maxZ].every(Number.isFinite)) return null;
+  return {
+    min: new BABYLON.Vector3(minX, minY, minZ),
+    max: new BABYLON.Vector3(maxX, maxY, maxZ),
+  };
+}
+
+function fitBabylonCamera(camera, meshes, fallbackPly) {
+  const box = boundsFromMeshes(meshes) || boundsFromPlyMeta(fallbackPly);
+  if (!box) return;
+  const center = box.min.add(box.max).scale(0.5);
+  const extent = box.max.subtract(box.min);
+  const radius = Math.max(0.8, extent.length() * 0.55);
+  camera.setTarget(center);
+  camera.lowerRadiusLimit = radius * 0.05;
+  camera.upperRadiusLimit = radius * 20;
+  camera.radius = radius * 1.8;
+  camera.minZ = Math.max(0.001, radius / 1000);
+  camera.maxZ = Math.max(1000, radius * 1000);
+}
+
+function startBabylonRenderLoop() {
+  if (!babylonEngine || !babylonScene) return;
+  babylonEngine.resize();
+  babylonEngine.runRenderLoop(() => babylonScene && babylonScene.render());
+}
+
+function decodeBase64ToUint8Array(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function importPlyWithBabylon(filePath, plyMeta) {
+  if (!window.BABYLON || !BABYLON.SceneLoader) throw new Error('Babylon SPLAT loader is not available.');
+  const { scene } = createBabylonViewer(el.plyCanvas, 'ply');
+  try {
+    return await BABYLON.SceneLoader.ImportMeshAsync('', '', plyMeta.fileUrl, scene, undefined, '.ply', filePath.split(/[\\/]/).pop() || 'output.ply');
+  } catch (fileUrlError) {
+    appendLog('Babylon file URL PLY load failed, retrying through app bridge: ' + (fileUrlError.message || fileUrlError));
+    disposeBabylonViewer();
+    const retry = createBabylonViewer(el.plyCanvas, 'ply');
+    const bytes = await sharpSplat.loadPlyBytes(filePath);
+    return BABYLON.SceneLoader.ImportMeshAsync('', '', decodeBase64ToUint8Array(bytes.base64), retry.scene, undefined, '.ply', bytes.name || 'output.ply');
+  }
+}
+
 async function loadGlbViewer(filePath) {
   if (!filePath || !el.glbCanvas || !window.BABYLON) return;
   showOutputPanel('glb');
   el.viewerInfo.textContent = 'Loading GLB preview…';
   try {
-    if (babylonEngine) {
-      babylonEngine.dispose();
-      babylonEngine = null;
-      babylonScene = null;
-    }
     const dataUrl = await sharpSplat.loadGlbPreview(filePath);
-    babylonEngine = new BABYLON.Engine(el.glbCanvas, true, { preserveDrawingBuffer: true, stencil: true });
-    babylonScene = new BABYLON.Scene(babylonEngine);
-    babylonScene.clearColor = new BABYLON.Color4(0.06, 0.065, 0.075, 1);
-    const camera = new BABYLON.ArcRotateCamera('camera', Math.PI / 2.4, Math.PI / 2.7, 2.4, BABYLON.Vector3.Zero(), babylonScene);
-    camera.attachControl(el.glbCanvas, true);
-    camera.wheelPrecision = 45;
-    new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0.3, 1, 0.4), babylonScene).intensity = 1.1;
-    const dir = new BABYLON.DirectionalLight('key', new BABYLON.Vector3(-0.6, -1, -0.8), babylonScene);
-    dir.intensity = 1.4;
-    await BABYLON.SceneLoader.AppendAsync('', dataUrl, babylonScene);
-    const meshes = babylonScene.meshes.filter((m) => m.getTotalVertices && m.getTotalVertices() > 0);
+    const { scene, camera } = createBabylonViewer(el.glbCanvas, 'glb');
+    await BABYLON.SceneLoader.AppendAsync('', dataUrl, scene);
+    const meshes = scene.meshes.filter((m) => m.getTotalVertices && m.getTotalVertices() > 0);
     if (meshes.length) {
-      const min = new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
-      const max = new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
-      for (const mesh of meshes) {
-        const info = mesh.getBoundingInfo();
-        BABYLON.Vector3.MinimizeToRef(min, info.boundingBox.minimumWorld, min);
-        BABYLON.Vector3.MaximizeToRef(max, info.boundingBox.maximumWorld, max);
-      }
-      const center = min.add(max).scale(0.5);
-      const radius = Math.max(0.8, max.subtract(min).length() * 0.75);
-      camera.setTarget(center);
-      camera.radius = radius * 1.7;
+      scene.executeWhenReady(() => babylonEngine && babylonEngine.resize());
+      fitBabylonCamera(camera, meshes);
     }
-    babylonEngine.runRenderLoop(() => babylonScene && babylonScene.render());
-    el.viewerInfo.textContent = 'GLB preview loaded · drag rotate · wheel zoom';
-    window.addEventListener('resize', () => babylonEngine && babylonEngine.resize());
+    startBabylonRenderLoop();
+    el.glbCanvas.addEventListener('dblclick', () => {
+      if (meshes.length) {
+        let glbMin = new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+        let glbMax = new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
+        for (const n of meshes) {
+          glbMin.copyFrom(BABYLON.Vector3.Minimize(glbMin, n.getBoundingInfo().boundingBox.minimumWorld));
+          glbMax.copyFrom(BABYLON.Vector3.Maximize(glbMax, n.getBoundingInfo().boundingBox.maximumWorld));
+        }
+        camera.setTarget(glbMin.add(glbMax).scale(0.5));
+        const ext = glbMax.subtract(glbMin);
+        camera.radius = Math.max(0.8, ext.length() * 0.55) * 1.7;
+      }
+    });
+    el.viewerInfo.textContent = 'GLB preview loaded · drag rotate · wheel zoom · double-click reset';
   } catch (err) {
     el.viewerInfo.textContent = `GLB preview failed: ${err.message || err}`;
     appendError('GLB preview failed', err);
@@ -735,34 +1023,54 @@ async function loadGlbViewer(filePath) {
 async function loadPlyViewer(filePath = state.outputPly) {
   if (!filePath) return;
   showOutputPanel('ply');
-  if (babylonEngine) {
-    babylonEngine.dispose();
-    babylonEngine = null;
-    babylonScene = null;
-  }
-  el.viewerInfo.textContent = 'Loading PLY…';
+  el.viewerInfo.textContent = 'Loading Gaussian splat PLY…';
   try {
-    const ply = await sharpSplat.loadPlyPreview(filePath);
-    state.viewer.positions = ply.positions;
-    state.viewer.colors = ply.colors;
-    state.viewer.bounds = ply.bounds;
+    if (babylonEngine) { babylonEngine.dispose(); babylonEngine = null; babylonScene = null; }
+    // Try the direct bytes path via importPlyWithBabylon — works without SceneLoader.AppendAsync
+    const result = await importPlyWithBabylon(filePath, {});
+    babylonScene = result.scene;
+    const camera = result.camera;
+    babylonEngine = result.engine;
+    fitBabylonCamera(camera, result.meshes || babylonScene.meshes || [], { bounds: state.viewer.bounds });
+    startBabylonRenderLoop();
+    state.viewer.useBabylon = true;
     state.outputPly = filePath;
     el.viewerPlaceholder.classList.add('hidden');
-    el.viewerInfo.textContent = `${ply.shownCount.toLocaleString()} / ${ply.vertexCount.toLocaleString()} points shown`;
-    resetViewerCamera();
+    el.viewerInfo.textContent = `Gaussian splat preview loaded · ${result.meshes ? result.meshes.length : ''} splats · drag rotate · scroll zoom · double-click reset`;
+    applyYFlip(babylonScene, true);
   } catch (err) {
-    el.viewerPlaceholder.classList.remove('hidden');
-    el.viewerInfo.textContent = `PLY preview failed: ${err.message || err}`;
+    appendLog('Babylon Gaussian splat preview failed; using point fallback: ' + (err.message || err));
+    try {
+      disposeBabylonViewer();
+      const ply = await sharpSplat.loadPlyPreview(filePath);
+      state.viewer.positions = ply.positions;
+      state.viewer.colors = ply.colors;
+      state.viewer.bounds = ply.bounds;
+      state.outputPly = filePath;
+      state.viewer.useBabylon = false;
+      state.viewer.gsSceneRoot = null;
+      state.viewer.gsCamera = null;
+      el.viewerPlaceholder.classList.add('hidden');
+      el.plyCanvas.classList.remove('hidden');
+      el.viewerInfo.textContent = `${ply.shownCount.toLocaleString()} / ${ply.vertexCount.toLocaleString()} points shown (fallback)`;
+      resetViewerCamera();
+    } catch (err2) {
+      disposeBabylonViewer();
+      el.viewerPlaceholder.classList.remove('hidden');
+      el.viewerInfo.textContent = `PLY preview failed: ${err2.message || err2}`;
+    }
   }
 }
 
 el.plyCanvas.addEventListener('pointerdown', (event) => {
+  if (state.viewer.useBabylon) return;
   state.viewer.dragging = true;
   state.viewer.lastX = event.clientX;
   state.viewer.lastY = event.clientY;
   el.plyCanvas.setPointerCapture(event.pointerId);
 });
 el.plyCanvas.addEventListener('pointermove', (event) => {
+  if (state.viewer.useBabylon) return;
   if (!state.viewer.dragging) return;
   const dx = event.clientX - state.viewer.lastX;
   const dy = event.clientY - state.viewer.lastY;
@@ -774,18 +1082,70 @@ el.plyCanvas.addEventListener('pointermove', (event) => {
 });
 el.plyCanvas.addEventListener('pointerup', () => { state.viewer.dragging = false; });
 el.plyCanvas.addEventListener('wheel', (event) => {
+  if (state.viewer.useBabylon) return;
   event.preventDefault();
   state.viewer.zoom *= event.deltaY < 0 ? 1.12 : 0.89;
   state.viewer.zoom = Math.max(0.08, Math.min(80, state.viewer.zoom));
   drawPlyViewer();
 }, { passive: false });
-el.plyCanvas.addEventListener('dblclick', resetViewerCamera);
-window.addEventListener('resize', drawPlyViewer);
+el.plyCanvas.addEventListener('dblclick', () => {
+  if (state.viewer.useBabylon && babylonCamera) {
+    fitBabylonCamera(babylonCamera, babylonScene ? babylonScene.meshes : [], { bounds: state.viewer.bounds });
+    return;
+  }
+  resetViewerCamera();
+});
+window.addEventListener('resize', () => {
+  if (state.viewer.useBabylon) return;
+  drawPlyViewer();
+});
+
+function panBabylonCamera(dx, dy) {
+  if (!babylonCamera) return;
+  const forward = babylonCamera.getTarget().subtract(babylonCamera.position).normalize();
+  const right = BABYLON.Vector3.Cross(forward, babylonCamera.upVector).normalize();
+  const up = BABYLON.Vector3.Cross(right, forward).normalize();
+  const amount = Math.max(0.01, babylonCamera.radius * 0.04);
+  const delta = right.scale(dx * amount).add(up.scale(dy * amount));
+  babylonCamera.setTarget(babylonCamera.getTarget().add(delta));
+}
+
+window.addEventListener('keydown', (event) => {
+  if (!el.plyCanvas || el.plyCanvas.classList.contains('hidden')) return;
+  if (state.viewer.useBabylon && activeBabylonKind === 'ply' && babylonCamera) {
+    switch (event.key) {
+      case 'w': case 'W': panBabylonCamera(0, 1); break;
+      case 's': case 'S': panBabylonCamera(0, -1); break;
+      case 'a': case 'A': panBabylonCamera(-1, 0); break;
+      case 'd': case 'D': panBabylonCamera(1, 0); break;
+      case 'ArrowUp': babylonCamera.radius = Math.max(babylonCamera.lowerRadiusLimit || 0.01, babylonCamera.radius * 0.9); break;
+      case 'ArrowDown': babylonCamera.radius = Math.min(babylonCamera.upperRadiusLimit || Infinity, babylonCamera.radius * 1.1); break;
+      default: return;
+    }
+    event.preventDefault();
+    return;
+  }
+  const PAN = 28;
+  const ZOOM = 0.12;
+  switch (event.key) {
+    case 'w': case 'W': state.viewer.panY -= PAN; break;
+    case 's': case 'S': state.viewer.panY += PAN; break;
+    case 'a': case 'A': state.viewer.panX -= PAN; break;
+    case 'd': case 'D': state.viewer.panX += PAN; break;
+    case 'ArrowUp': state.viewer.zoom *= 1 + ZOOM; break;
+    case 'ArrowDown': state.viewer.zoom *= 1 - ZOOM; break;
+    default: return;
+  }
+  event.preventDefault();
+  state.viewer.zoom = Math.max(0.08, Math.min(80, state.viewer.zoom));
+  drawPlyViewer();
+});
 
 
 el.inputPreview.classList.add('hidden');
 setMode('sharp');
 setProgress('idle');
+restoreOutputFolder();
 checkRuntime(false);
 loadAppInfo();
 drawPlyViewer();
