@@ -804,7 +804,7 @@ function resetGsCamera(scene, camera) {
 }
 
 function resetViewerCamera() {
-  state.viewer.rotX = -0.28;
+  state.viewer.rotX = +0.28;  // was -0.28; flip back for SHARP Y-down
   state.viewer.rotY = 0.45;
   state.viewer.zoom = 1;
   state.viewer.panX = 0;
