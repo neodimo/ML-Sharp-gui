@@ -133,6 +133,22 @@ function mlSharpSourcePath() {
   return path.join(resourcesRoot(), 'ml-sharp');
 }
 
+function writableMlSharpSourcePath() {
+  return path.join(runtimeRoot(), 'install-sources', 'ml-sharp');
+}
+
+function prepareWritableMlSharpSource() {
+  const source = mlSharpSourcePath();
+  const target = writableMlSharpSourcePath();
+  fs.rmSync(target, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.cpSync(source, target, {
+    recursive: true,
+    filter: (entry) => !/([/\\])(__pycache__|\.pytest_cache|sharp\.egg-info)([/\\]|$)/.test(entry),
+  });
+  return target;
+}
+
 function uvPath() {
   if (process.platform === 'win32') {
     const bundled = path.join(resourcesRoot(), 'uv', 'uv.exe');
@@ -537,20 +553,22 @@ async function installRuntime() {
     }
   }
 
-  // Apple's requirements.txt contains `-e .`. For a portable app, install dependencies
-  // first, then install ml-sharp non-editably so the bundled resources can stay read-only.
+  // Apple's requirements.txt contains `-e .`. Copy ml-sharp out of Program Files
+  // first because setuptools writes egg-info beside pyproject.toml while building.
+  const installMl = prepareWritableMlSharpSource();
+  sendLog(`Prepared writable SHARP install source: ${installMl}`);
   const filteredRequirements = path.join(runtimeRoot(), 'requirements-no-editable.txt');
-  const reqText = fs.readFileSync(path.join(ml, 'requirements.txt'), 'utf8')
+  const reqText = fs.readFileSync(path.join(installMl, 'requirements.txt'), 'utf8')
     .split(/\r?\n/)
     .filter((line) => !line.trim().startsWith('-e '))
     .join('\n');
   fs.writeFileSync(filteredRequirements, reqText);
   await runProcess(uv, ['pip', 'install', '--python', py, '-r', filteredRequirements], {
-    cwd: ml,
+    cwd: installMl,
     env,
   });
-  await runProcess(uv, ['pip', 'install', '--python', py, ml], { cwd: ml, env });
-  await runProcess(py, ['-c', 'from sharp.cli import main_cli; print("SHARP import check OK")'], { cwd: ml, env });
+  await runProcess(uv, ['pip', 'install', '--python', py, installMl], { cwd: installMl, env });
+  await runProcess(py, ['-c', 'from sharp.cli import main_cli; print("SHARP import check OK")'], { cwd: installMl, env });
 
   sendLog('Runtime install complete.');
   sendJobState({ busy: false, label: 'Runtime ready' });
