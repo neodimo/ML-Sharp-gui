@@ -1,6 +1,6 @@
 {
   "name": "ml-sharp-gui",
-  "version": "0.4.15",
+  "version": "0.4.16",
   "description": "Independent Windows GUI wrapper for Apple SHARP / ml-sharp single-image Gaussian Splat prediction.",
   "main": "src/main.cjs",
   "author": "Omid Ensafi and contributors",
