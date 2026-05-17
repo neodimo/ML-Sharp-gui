@@ -103,7 +103,9 @@ const el = {
   updateProgressBar: $('updateProgressBar'),
   updateProgressLabel: $('updateProgressLabel'),
   updateStatus: $('updateStatus'),
+  appVersion: $('appVersion'),
   plyCanvas: $('plyCanvas'),
+  plyCanvas2D: $('plyCanvas2D'),
   viewerPlaceholder: $('viewerPlaceholder'),
   viewerHelp: $('viewerHelp'),
   viewerInfo: $('viewerInfo'),
@@ -354,6 +356,7 @@ function showOutputPanel(kind) {
   el.resultPanel.classList.remove('hidden');
   const isGlb = kind === 'glb';
   el.plyCanvas.classList.toggle('hidden', isGlb);
+  el.plyCanvas2D.classList.add('hidden');
   el.glbCanvas.classList.toggle('hidden', !isGlb);
   el.viewerHelp.classList.toggle('hidden', false);
   el.viewerPlaceholder.classList.add('hidden');
@@ -813,7 +816,8 @@ function resizeCanvasToDisplaySize() {
 function applyYFlip(scene, flip) {
   if (!scene) return;
   const quat = flip ? BABYLON.Quaternion.RotationAxis(new BABYLON.Vector3(1, 0, 0), Math.PI) : BABYLON.Quaternion.Identity();
-  scene.getMeshes().forEach((mesh) => { mesh.rotationQuaternion = quat; });
+  const meshes = typeof scene.getMeshes === 'function' ? scene.getMeshes() : scene.meshes;
+  (meshes || []).forEach((mesh) => { mesh.rotationQuaternion = quat; });
 }
 
 function resetGsCamera(scene, camera) {
@@ -1072,6 +1076,8 @@ async function loadPlyViewer(filePath = state.outputPly) {
     state.viewer.useBabylon = true;
     state.outputPly = filePath;
     el.viewerPlaceholder.classList.add('hidden');
+    el.plyCanvas.classList.remove('hidden');
+    el.plyCanvas2D.classList.add('hidden');
     el.viewerInfo.textContent = `Gaussian splat preview loaded · ${result.meshes ? result.meshes.length : ''} splats · drag rotate · scroll zoom · double-click reset`;
     applyYFlip(babylonScene, true);
   } catch (err) {
@@ -1087,6 +1093,7 @@ async function loadPlyViewer(filePath = state.outputPly) {
       state.viewer.gsSceneRoot = null;
       state.viewer.gsCamera = null;
       el.viewerPlaceholder.classList.add('hidden');
+      el.plyCanvas.classList.add('hidden');
       el.plyCanvas2D.classList.remove('hidden');
       el.viewerInfo.textContent = `${ply.shownCount.toLocaleString()} / ${ply.vertexCount.toLocaleString()} points shown (fallback)`;
       resetViewerCamera();
@@ -1147,7 +1154,7 @@ function panBabylonCamera(dx, dy) {
 }
 
 window.addEventListener('keydown', (event) => {
-  if (!el.plyCanvas || el.plyCanvas.classList.contains('hidden') || el.plyCanvas2D.classList.contains('hidden')) return;
+  if (!el.plyCanvas || (el.plyCanvas.classList.contains('hidden') && el.plyCanvas2D.classList.contains('hidden'))) return;
   if (state.viewer.useBabylon && activeBabylonKind === 'ply' && babylonCamera) {
     switch (event.key) {
       case 'w': case 'W': panBabylonCamera(0, 1); break;
@@ -1182,6 +1189,12 @@ el.inputPreview.classList.add('hidden');
 setMode('sharp');
 setProgress('idle');
 restoreOutputFolder();
+
+if (el.appVersion && sharpSplat.getAppVersion) {
+  sharpSplat.getAppVersion()
+    .then((version) => { el.appVersion.textContent = `v${version}`; })
+    .catch(() => {});
+}
 // Log WebGL and GPU info from the renderer process so we can see what the app actually sees.
 const webglStatus = detectWebGLStatus();
 const logLines = [

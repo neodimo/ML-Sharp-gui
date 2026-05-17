@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('sharpSplat', {
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   restartAndInstallUpdate: () => ipcRenderer.invoke('restart-and-install-update'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   getLastOutputFolder: () => ipcRenderer.invoke('get-last-output-folder'),

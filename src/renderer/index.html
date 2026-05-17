@@ -12,7 +12,7 @@
         <div class="brandMark">S</div>
         <div>
           <p class="eyebrow">Single image → 3D asset</p>
-          <h1>2D to 3D</h1>
+          <h1>2D to 3D <span id="appVersion" class="appVersion">v0.4.22</span></h1>
         </div>
       </div>
       <div class="headerActions">
@@ -195,7 +195,15 @@
         </article>
       </section>
 
-      <pre id="log" class="hidden" aria-hidden="true"></pre>
+      <aside class="rightRail">
+        <details class="panel logPanel">
+          <summary>
+            <span>Full runtime log</span>
+            <small>Debug / copy source</small>
+          </summary>
+          <pre id="log"></pre>
+        </details>
+      </aside>
     </main>
 
     <script src="../../node_modules/babylonjs/babylon.js"></script>

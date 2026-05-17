@@ -1188,9 +1188,11 @@ ipcMain.handle('download-update', async () => {
 
 ipcMain.handle('restart-and-install-update', async () => {
   if (!updateDownloaded) return { ok: false, message: 'No downloaded update is ready yet.' };
-  autoUpdater.quitAndInstall(false, true);
+  autoUpdater.quitAndInstall(true, true);
   return { ok: true };
 });
+
+ipcMain.handle('get-app-version', async () => app.getVersion());
 
 ipcMain.handle('select-input', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
