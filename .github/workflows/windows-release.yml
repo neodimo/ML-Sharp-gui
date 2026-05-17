@@ -25,8 +25,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Smoke test
-        run: npm run smoke
+      - name: QA regression gate
+        run: npm run qa
 
       - name: Build and publish Windows installer
         env:
