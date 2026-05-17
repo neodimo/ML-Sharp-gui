@@ -985,17 +985,37 @@ function decodeBase64ToUint8Array(base64) {
   return bytes;
 }
 
+function withTimeout(promise, ms, label) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function importPlyWithBabylon(filePath, plyMeta) {
   if (!window.BABYLON || !BABYLON.SceneLoader) throw new Error('Babylon SPLAT loader is not available.');
   const { scene } = createBabylonViewer(el.plyCanvas, 'ply');
+  const name = filePath.split(/[\\/]/).pop() || 'output.ply';
   try {
-    return await BABYLON.SceneLoader.ImportMeshAsync('', '', plyMeta.fileUrl, scene, undefined, '.ply', filePath.split(/[\\/]/).pop() || 'output.ply');
+    if (!plyMeta.fileUrl) throw new Error('PLY file URL was not prepared.');
+    const result = await withTimeout(
+      BABYLON.SceneLoader.ImportMeshAsync('', '', plyMeta.fileUrl, scene, undefined, '.ply', name),
+      8000,
+      'Babylon PLY load'
+    );
+    return { ...result, scene, camera: babylonCamera, engine: babylonEngine };
   } catch (fileUrlError) {
     appendLog('Babylon file URL PLY load failed, retrying through app bridge: ' + (fileUrlError.message || fileUrlError));
     disposeBabylonViewer();
     const retry = createBabylonViewer(el.plyCanvas, 'ply');
     const bytes = await sharpSplat.loadPlyBytes(filePath);
-    return BABYLON.SceneLoader.ImportMeshAsync('', '', decodeBase64ToUint8Array(bytes.base64), retry.scene, undefined, '.ply', bytes.name || 'output.ply');
+    const result = await withTimeout(
+      BABYLON.SceneLoader.ImportMeshAsync('', '', decodeBase64ToUint8Array(bytes.base64), retry.scene, undefined, '.ply', bytes.name || name),
+      8000,
+      'Babylon bridged PLY load'
+    );
+    return { ...result, scene: retry.scene, camera: babylonCamera, engine: babylonEngine };
   }
 }
 
@@ -1037,10 +1057,13 @@ async function loadPlyViewer(filePath = state.outputPly) {
   if (!filePath) return;
   showOutputPanel('ply');
   el.viewerInfo.textContent = 'Loading Gaussian splat PLY…';
+  let ply = null;
   try {
     if (babylonEngine) { babylonEngine.dispose(); babylonEngine = null; babylonScene = null; }
-    // Try the direct bytes path via importPlyWithBabylon — works without SceneLoader.AppendAsync
-    const result = await importPlyWithBabylon(filePath, {});
+    ply = await sharpSplat.loadPlyPreview(filePath);
+    state.viewer.bounds = ply.bounds;
+    // Prefer Babylon's splat renderer, but keep the parsed point preview ready as a guaranteed fallback.
+    const result = await importPlyWithBabylon(filePath, ply);
     babylonScene = result.scene;
     const camera = result.camera;
     babylonEngine = result.engine;
@@ -1055,7 +1078,7 @@ async function loadPlyViewer(filePath = state.outputPly) {
     appendLog('Babylon Gaussian splat preview failed; using point fallback: ' + (err.message || err));
     try {
       disposeBabylonViewer();
-      const ply = await sharpSplat.loadPlyPreview(filePath);
+      if (!ply) ply = await sharpSplat.loadPlyPreview(filePath);
       state.viewer.positions = ply.positions;
       state.viewer.colors = ply.colors;
       state.viewer.bounds = ply.bounds;
