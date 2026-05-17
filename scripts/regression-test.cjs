@@ -76,8 +76,10 @@ includesAll('silent updater contract', main, [
 check('installer UI updater regression stays blocked', !main.includes('autoUpdater.quitAndInstall(false, true)'));
 
 includesAll('CI release gate contract', workflow, [
-  'npm run qa',
-  'Build and publish Windows installer',
+  'npm run gate:release:prebuild',
+  'npm run gate:release:postbuild',
+  'Build Windows installer',
+  'Publish GitHub release assets',
 ]);
 
 if (failures.length) {

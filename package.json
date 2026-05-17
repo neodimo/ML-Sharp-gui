@@ -11,6 +11,8 @@
     "smoke": "node scripts/smoke-test.cjs",
     "regression": "node scripts/regression-test.cjs",
     "qa": "npm run smoke && npm run regression",
+    "gate:release:prebuild": "node scripts/release-gate.cjs prebuild",
+    "gate:release:postbuild": "node scripts/release-gate.cjs postbuild",
     "pack:win-folder": "electron-packager . 2D-to-3D --platform=win32 --arch=x64 --out=dist --overwrite --asar --prune=true --extra-resource=vendor/ml-sharp --extra-resource=vendor/uv --extra-resource=scripts/infinidepth_360_bridge.py --ignore='^/dist($|/)' --ignore='^/runtime($|/)' --ignore='^/sharp-runtime($|/)' --ignore='^/test-output($|/)' --ignore='^/vendor/ml-sharp($|/)' --ignore='^/vendor/uv($|/)'",
     "dist:win": "electron-builder --win nsis --x64 --publish never",
     "dist:win:publish": "electron-builder --win nsis --x64 --publish always"

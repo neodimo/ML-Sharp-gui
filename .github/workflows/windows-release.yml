@@ -26,9 +26,38 @@ jobs:
         run: npm ci
 
       - name: QA regression gate
-        run: npm run qa
+        run: npm run gate:release:prebuild
 
-      - name: Build and publish Windows installer
+      - name: Build Windows installer
+        run: npm run dist:win
+
+      - name: Verify release artifacts
+        run: npm run gate:release:postbuild
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 2D-to-3D-Windows-${{ github.ref_name }}
+          path: |
+            dist/2D-to-3D-Setup-*.exe
+            dist/2D-to-3D-Setup-*.exe.blockmap
+            dist/latest.yml
+
+      - name: Publish GitHub release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist:win:publish
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = node -p "require('./package.json').version"
+          $assets = @(
+            "dist/2D-to-3D-Setup-$version.exe",
+            "dist/2D-to-3D-Setup-$version.exe.blockmap",
+            "dist/latest.yml"
+          )
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $assets --repo "${{ github.repository }}" --clobber
+          } else {
+            gh release create $tag $assets --repo "${{ github.repository }}" --title $version --notes "Automated Windows release for $version." --latest
+          }
