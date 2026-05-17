@@ -799,13 +799,13 @@ el.viewPly.addEventListener('click', () => loadPlyViewer());
 
 
 function resizeCanvasToDisplaySize() {
-  const rect = el.plyCanvas.getBoundingClientRect();
+  const rect = el.plyCanvas2D.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const width = Math.max(1, Math.floor(rect.width * dpr));
   const height = Math.max(1, Math.floor(rect.height * dpr));
-  if (el.plyCanvas.width !== width || el.plyCanvas.height !== height) {
-    el.plyCanvas.width = width;
-    el.plyCanvas.height = height;
+  if (el.plyCanvas2D.width !== width || el.plyCanvas2D.height !== height) {
+    el.plyCanvas2D.width = width;
+    el.plyCanvas2D.height = height;
   }
   return dpr;
 }
@@ -835,7 +835,7 @@ function resetViewerCamera() {
 }
 
 function drawPlyViewer() {
-  const canvas = el.plyCanvas;
+  const canvas = el.plyCanvas2D;  // Use dedicated 2D canvas so WebGL canvas stays pristine for Babylon
   const ctx = canvas.getContext('2d');
   const dpr = resizeCanvasToDisplaySize();
   const width = canvas.width;
@@ -1064,7 +1064,7 @@ async function loadPlyViewer(filePath = state.outputPly) {
       state.viewer.gsSceneRoot = null;
       state.viewer.gsCamera = null;
       el.viewerPlaceholder.classList.add('hidden');
-      el.plyCanvas.classList.remove('hidden');
+      el.plyCanvas2D.classList.remove('hidden');
       el.viewerInfo.textContent = `${ply.shownCount.toLocaleString()} / ${ply.vertexCount.toLocaleString()} points shown (fallback)`;
       resetViewerCamera();
     } catch (err2) {
@@ -1075,14 +1075,14 @@ async function loadPlyViewer(filePath = state.outputPly) {
   }
 }
 
-el.plyCanvas.addEventListener('pointerdown', (event) => {
+el.plyCanvas2D.addEventListener('pointerdown', (event) => {
   if (state.viewer.useBabylon) return;
   state.viewer.dragging = true;
   state.viewer.lastX = event.clientX;
   state.viewer.lastY = event.clientY;
-  el.plyCanvas.setPointerCapture(event.pointerId);
+  el.plyCanvas2D.setPointerCapture(event.pointerId);
 });
-el.plyCanvas.addEventListener('pointermove', (event) => {
+el.plyCanvas2D.addEventListener('pointermove', (event) => {
   if (state.viewer.useBabylon) return;
   if (!state.viewer.dragging) return;
   const dx = event.clientX - state.viewer.lastX;
@@ -1093,15 +1093,15 @@ el.plyCanvas.addEventListener('pointermove', (event) => {
   state.viewer.rotX += dy * 0.008;
   drawPlyViewer();
 });
-el.plyCanvas.addEventListener('pointerup', () => { state.viewer.dragging = false; });
-el.plyCanvas.addEventListener('wheel', (event) => {
+el.plyCanvas2D.addEventListener('pointerup', () => { state.viewer.dragging = false; });
+el.plyCanvas2D.addEventListener('wheel', (event) => {
   if (state.viewer.useBabylon) return;
   event.preventDefault();
   state.viewer.zoom *= event.deltaY < 0 ? 1.12 : 0.89;
   state.viewer.zoom = Math.max(0.08, Math.min(80, state.viewer.zoom));
   drawPlyViewer();
 }, { passive: false });
-el.plyCanvas.addEventListener('dblclick', () => {
+el.plyCanvas2D.addEventListener('dblclick', () => {
   if (state.viewer.useBabylon && babylonCamera) {
     fitBabylonCamera(babylonCamera, babylonScene ? babylonScene.meshes : [], { bounds: state.viewer.bounds });
     return;
@@ -1124,7 +1124,7 @@ function panBabylonCamera(dx, dy) {
 }
 
 window.addEventListener('keydown', (event) => {
-  if (!el.plyCanvas || el.plyCanvas.classList.contains('hidden')) return;
+  if (!el.plyCanvas || el.plyCanvas.classList.contains('hidden') || el.plyCanvas2D.classList.contains('hidden')) return;
   if (state.viewer.useBabylon && activeBabylonKind === 'ply' && babylonCamera) {
     switch (event.key) {
       case 'w': case 'W': panBabylonCamera(0, 1); break;
