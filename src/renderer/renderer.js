@@ -104,6 +104,7 @@ const el = {
   updateProgressLabel: $('updateProgressLabel'),
   updateStatus: $('updateStatus'),
   appVersion: $('appVersion'),
+  stageResizer: $('stageResizer'),
   plyCanvas: $('plyCanvas'),
   plyCanvas2D: $('plyCanvas2D'),
   viewerPlaceholder: $('viewerPlaceholder'),
@@ -354,6 +355,7 @@ function setMode(mode) {
 
 function showOutputPanel(kind) {
   el.resultPanel.classList.remove('hidden');
+  el.stageResizer.classList.remove('hidden');
   const isGlb = kind === 'glb';
   el.plyCanvas.classList.toggle('hidden', isGlb);
   el.plyCanvas2D.classList.add('hidden');
@@ -800,6 +802,43 @@ el.openFolder.addEventListener('click', () => {
 });
 el.viewPly.addEventListener('click', () => loadPlyViewer());
 
+document.querySelectorAll('[data-collapsible-panel] .panelMinimize').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const panel = button.closest('[data-collapsible-panel]');
+    if (!panel) return;
+    const minimized = panel.classList.toggle('minimized');
+    button.textContent = minimized ? '+' : '-';
+    button.title = minimized ? 'Restore' : 'Minimize';
+    button.setAttribute('aria-label', (minimized ? 'Restore ' : 'Minimize ') + (panel.dataset.panelTitle || 'panel') + ' panel');
+    if (!minimized && panel === el.resultPanel) {
+      if (state.viewer.useBabylon && babylonEngine) babylonEngine.resize();
+      else drawPlyViewer();
+    }
+  });
+});
+
+if (el.stageResizer) {
+  el.stageResizer.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    el.stageResizer.classList.add('dragging');
+    el.stageResizer.setPointerCapture(event.pointerId);
+  });
+  el.stageResizer.addEventListener('pointermove', (event) => {
+    if (!el.stageResizer.classList.contains('dragging')) return;
+    const centerStage = document.querySelector('.centerStage');
+    const rect = centerStage.getBoundingClientRect();
+    const height = Math.max(180, Math.min(rect.height - 220, event.clientY - rect.top));
+    centerStage.style.setProperty('--generate-row', height + 'px');
+    if (state.viewer.useBabylon && babylonEngine) babylonEngine.resize();
+    else drawPlyViewer();
+  });
+  el.stageResizer.addEventListener('pointerup', (event) => {
+    el.stageResizer.classList.remove('dragging');
+    el.stageResizer.releasePointerCapture(event.pointerId);
+  });
+}
 
 function resizeCanvasToDisplaySize() {
   const rect = el.plyCanvas2D.getBoundingClientRect();

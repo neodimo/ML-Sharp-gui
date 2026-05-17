@@ -12,7 +12,7 @@
         <div class="brandMark">S</div>
         <div>
           <p class="eyebrow">Single image → 3D asset</p>
-          <h1>2D to 3D <span id="appVersion" class="appVersion">v0.4.22</span></h1>
+          <h1>2D to 3D <span id="appVersion" class="appVersion">v0.4.24</span></h1>
         </div>
       </div>
       <div class="headerActions">
@@ -29,13 +29,16 @@
 
     <main class="workbench">
       <section class="leftRail">
-        <article class="panel inputCard">
+        <article class="panel inputCard" data-collapsible-panel data-panel-title="Input">
           <div class="sectionHead">
             <div>
               <p class="eyebrow">Input</p>
               <h2>Source image</h2>
             </div>
-            <span id="inputInfo" class="metaText">No image loaded</span>
+            <div class="sectionActions">
+              <span id="inputInfo" class="metaText">No image loaded</span>
+              <button class="panelMinimize" type="button" aria-label="Minimize Input panel" title="Minimize">-</button>
+            </div>
           </div>
 
           <div class="previewShell inputPreviewShell">
@@ -56,10 +59,13 @@
           </div>
         </article>
 
-        <details id="sharpAdvancedPanel" class="panel advancedPanel">
+        <details id="sharpAdvancedPanel" class="panel advancedPanel" data-collapsible-panel data-panel-title="SHARP options">
           <summary>
             <span>SHARP options</span>
-            <small>EXR / device</small>
+            <span class="summaryActions">
+              <small>EXR / device</small>
+              <button class="panelMinimize" type="button" aria-label="Minimize SHARP options panel" title="Minimize">-</button>
+            </span>
           </summary>
           <div class="grid two">
             <div>
@@ -98,13 +104,16 @@
       </section>
 
       <section class="centerStage">
-        <article class="panel heroPanel">
+        <article class="panel heroPanel" data-collapsible-panel data-panel-title="Generate">
           <div class="sectionHead">
             <div>
               <p class="eyebrow">Generate</p>
               <h2>Choose output type</h2>
             </div>
-            <span id="modeSummary" class="metaText">SHARP .PLY selected</span>
+            <div class="sectionActions">
+              <span id="modeSummary" class="metaText">SHARP .PLY selected</span>
+              <button class="panelMinimize" type="button" aria-label="Minimize Generate panel" title="Minimize">-</button>
+            </div>
           </div>
 
           <div class="modeTabs" role="tablist" aria-label="Output type">
@@ -166,19 +175,24 @@
           <div class="liveLogPanel" aria-label="Live runtime activity">
             <div class="liveLogHead">
               <span>Live activity</span>
-              <button id="copyLogButton" class="ghost small">Copy full log</button>
+              <button id="copyLogButton" class="ghost small">Copy log</button>
             </div>
             <pre id="liveLog"></pre>
           </div>
         </article>
 
-        <article id="resultPanel" class="panel resultPanel hidden">
+        <div id="stageResizer" class="stageResizer hidden" role="separator" aria-orientation="horizontal" aria-label="Resize Generate and Preview panels" title="Drag to resize Generate and Preview"></div>
+
+        <article id="resultPanel" class="panel resultPanel hidden" data-collapsible-panel data-panel-title="Preview">
           <div class="sectionHead">
             <div>
               <p class="eyebrow">Preview</p>
               <h2 id="viewerTitle">Output asset</h2>
             </div>
-            <span id="viewerInfo" class="metaText">No output yet</span>
+            <div class="sectionActions">
+              <span id="viewerInfo" class="metaText">No output yet</span>
+              <button class="panelMinimize" type="button" aria-label="Minimize Preview panel" title="Minimize">-</button>
+            </div>
           </div>
           <div class="viewerShell">
             <canvas id="plyCanvas" class="hidden" width="900" height="420"></canvas>
@@ -195,15 +209,7 @@
         </article>
       </section>
 
-      <aside class="rightRail">
-        <details class="panel logPanel">
-          <summary>
-            <span>Full runtime log</span>
-            <small>Debug / copy source</small>
-          </summary>
-          <pre id="log"></pre>
-        </details>
-      </aside>
+      <pre id="log" class="hidden" aria-hidden="true"></pre>
     </main>
 
     <script src="../../node_modules/babylonjs/babylon.js"></script>

@@ -32,10 +32,15 @@ includesAll('header version badge contract', html, [
   'id="appVersion"',
 ]);
 check('header version badge has visible semver fallback', /id="appVersion"[^>]*>v\d+\.\d+\.\d+</.test(html));
-includesAll('collapsible full log rail contract', html, [
-  '<aside class="rightRail">',
-  '<details class="panel logPanel">',
-  '<pre id="log"></pre>',
+check('header version fallback matches package version', html.includes(`id="appVersion" class="appVersion">v${pkg.version}</span>`));
+includesAll('hidden full log sink contract', html, [
+  '<pre id="log" class="hidden" aria-hidden="true"></pre>',
+]);
+check('visible full runtime log rail stays removed', !html.includes('Full runtime log') && !html.includes('logPanel') && !html.includes('rightRail'));
+includesAll('panel minimize and stage resize contract', html, [
+  'class="panelMinimize"',
+  'id="stageResizer"',
+  'aria-label="Resize Generate and Preview panels"',
 ]);
 includesAll('viewer canvas contract', html, [
   'id="plyCanvas"',
@@ -45,14 +50,15 @@ includesAll('viewer canvas contract', html, [
 
 includesAll('layout style contract', css, [
   '.appVersion',
-  '.rightRail',
-  '.logPanel',
+  '.panelMinimize',
+  '.stageResizer',
   '#plyCanvas, #plyCanvas2D, #glbCanvas',
 ]);
-check('workbench keeps right rail column', /\.workbench\s*\{[^}]*grid-template-columns:[^;}]*minmax\(220px,\s*300px\)/s.test(css));
+check('workbench has no full-log right rail column', !/\.workbench\s*\{[^}]*grid-template-columns:[^;}]*minmax\(220px,\s*300px\)/s.test(css));
 
 includesAll('renderer element map contract', renderer, [
   "appVersion: $('appVersion')",
+  "stageResizer: $('stageResizer')",
   "plyCanvas: $('plyCanvas')",
   "plyCanvas2D: $('plyCanvas2D')",
   'sharpSplat.getAppVersion()',
@@ -93,7 +99,9 @@ console.log(JSON.stringify({
   version: pkg.version,
   checks: [
     'version badge',
-    'right log rail',
+    'panel minimize',
+    'generate preview resizer',
+    'hidden full log sink',
     'split PLY canvases',
     'PLY fallback',
     'silent updater',

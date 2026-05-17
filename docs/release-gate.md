@@ -15,7 +15,9 @@ Before any public release, the last person or agent to push/build owns the QA pa
 The gate starts with the failures that broke recent releases:
 
 - version badge is visible beside the app title
-- right-side full runtime log rail is present and collapsible
+- full runtime log stays hidden; no visible full-log rail in the app
+- major panels expose minimize/restore controls
+- Generate and Preview have a draggable resize bar
 - SHARP input/output controls are present
 - PLY viewer has separate Babylon and 2D fallback canvases
 - PLY fallback becomes visible when Babylon/WebGL fails
@@ -23,6 +25,10 @@ The gate starts with the failures that broke recent releases:
 - updater uses silent install, not installer UI relaunch
 - CI does not publish a release until QA and artifact checks pass
 - release artifacts include installer, blockmap, and latest.yml
+
+## Tracked Preview Viewer Follow-up
+
+WebGL splats are visually functioning as of v0.4.23+, but playback is slow. Treat splat render performance as the next preview-viewer stabilization item after the UI/update regressions are closed.
 
 ## Ownership
 
