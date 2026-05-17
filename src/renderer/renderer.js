@@ -3,6 +3,28 @@
 
 const $ = (id) => document.getElementById(id);
 
+// Probe the renderer process WebGL context and GPU renderer info so we can log it.
+function detectWebGLStatus() {
+  const canvas = document.createElement('canvas');
+  const makeContext = (name) => {
+    try { return canvas.getContext(name); } catch { return null; }
+  };
+  const webgl2 = makeContext('webgl2');
+  const webgl1 = webgl2 ? null : makeContext('webgl');
+  const gl = webgl2 || webgl1;
+  const result = { webgl2: !!webgl2, webgl1: !!webgl1, renderer: null, vendor: null, error: null };
+  if (gl) {
+    try {
+      result.renderer = gl.getParameter(gl.RENDERER);
+      result.vendor = gl.getParameter(gl.VENDOR);
+    } catch (_) {}
+  } else {
+    result.error = 'canvas.getContext returned null — WebGL not available in this renderer process';
+  }
+  canvas.remove();
+  return result;
+}
+
 const state = {
   inputPath: '',
   outputFolder: '',
@@ -1137,5 +1159,14 @@ el.inputPreview.classList.add('hidden');
 setMode('sharp');
 setProgress('idle');
 restoreOutputFolder();
+// Log WebGL and GPU info from the renderer process so we can see what the app actually sees.
+const webglStatus = detectWebGLStatus();
+const logLines = [
+  'Electron GPU: chrome=' + navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1] + ' electron=' + process.versions?.electron + ' platform=' + navigator.platform,
+  'Renderer WebGL: webgl2=' + webglStatus.webgl2 + ' webgl1=' + webglStatus.webgl1,
+  'Renderer GPU: renderer=' + (webglStatus.renderer || 'unknown') + ' vendor=' + (webglStatus.vendor || 'unknown'),
+];
+if (webglStatus.error) logLines.push('WebGL probe error: ' + webglStatus.error);
+logLines.forEach((l) => appendLog(l));
 checkRuntime(false);
 drawPlyViewer();

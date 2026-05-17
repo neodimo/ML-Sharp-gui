@@ -14,6 +14,17 @@ let mainWindow;
 let activeProcess = null;
 let updateDownloaded = false;
 
+// Force ANGLE/D3D11 on Windows so Electron's Chromium uses the D3D11 backend for WebGL.
+// Without this, the integrated Intel GPU often wins and WebGL fails to create a context.
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('use-gl', 'angle');
+  app.commandLine.appendSwitch('use-angle', 'd3d11');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+  // Prevent the GPU process from blacklisting the high-performance discrete GPU.
+  app.commandLine.appendSwitch('ignore-gpu-blacklist', 'true');
+  app.commandLine.appendSwitch('enable-unsafe-webgpu');
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1120,
