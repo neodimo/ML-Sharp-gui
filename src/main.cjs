@@ -18,11 +18,13 @@ let updateDownloaded = false;
 // Without this, the integrated Intel GPU often wins and WebGL fails to create a context.
 if (process.platform === 'win32') {
   app.commandLine.appendSwitch('use-gl', 'angle');
-  app.commandLine.appendSwitch('use-angle', 'd3d11');
+  app.commandLine.appendSwitch('use-angle', 'd3d11,swiftshader');
   app.commandLine.appendSwitch('disable-gpu-sandbox');
   // Prevent the GPU process from blacklisting the high-performance discrete GPU.
   app.commandLine.appendSwitch('ignore-gpu-blacklist', 'true');
   app.commandLine.appendSwitch('enable-unsafe-webgpu');
+  // Disable Viz display compositor which can interfere with WebGL context creation on some systems
+  app.commandLine.appendSwitch('disable-features', 'VizDisplayCompositor');
 }
 
 function createWindow() {
